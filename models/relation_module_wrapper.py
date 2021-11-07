@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from eod.utils.general.registry_factory import MODULE_ZOO_REGISTRY
+from eod.models.losses import build_loss
 from ..utils.debug import info_debug
 
 __all__ = ['RelationYOLOX']
@@ -13,6 +14,7 @@ class RelationYOLOX(nn.Module):
 
     def __init__(self, relation_cfgs, yolox_kwargs, inplanes):
         super().__init__()
+        self.prefix = self.__class__.__name__
         self.roi_features_mappings = {0: 'cls', 1: 'loc', 2: 'id'}
         self.inplanes = inplanes
         self.post_module = MODULE_ZOO_REGISTRY.build(dict(
@@ -45,7 +47,8 @@ class RelationYOLOX(nn.Module):
                         padding=0,
                     )
                 )
-
+            loss = build_loss(relation_cfg['loss'])
+            setattr(self, self.roi_features_mappings[relation_idx] + '_loss', loss)
             setattr(self, self.roi_features_mappings[relation_idx] + '_preds', mod_list)
 
     def get_targets(self, input, return_preds=False):
@@ -100,7 +103,7 @@ class RelationYOLOX(nn.Module):
                 lvl_mask = mask[prev: prev + now]
                 lvl_batch.append(lvl_mask)
                 now_num = int((lvl_mask).sum())
-                print(i, j, now_num)
+                # print(i, j, now_num)
                 one_range.append((prev_num[j], prev_num[j] + now_num))
                 prev_num[j] += now_num
             target_range.append(one_range)
@@ -110,31 +113,31 @@ class RelationYOLOX(nn.Module):
 
     def get_selected_indices(self, fg_mask, objness, mode='main'):
         if mode == 'main':
-            num = 800
+            num = min(fg_mask.size(1), 600)  # must larger than fg_num
         else:
-            num = 400
+            num = min(fg_mask.size(1), 600) // 2
         new_masks = []
         new_fg_masks = []
         if fg_mask is not None:
             for i in range(fg_mask.size(0)):
                 fg_num = int(fg_mask[i].sum())
                 bg_num = num - fg_num
-                new_mask = fg_mask[i].clone()
                 obj = objness[i].reshape(fg_mask[i].numel())
                 if bg_num > 0:
+                    new_mask = fg_mask[i].clone()
                     bg_inds = (~fg_mask[i]).nonzero().flatten()
                     bgs = obj[~fg_mask[i]]
-                    print(bgs.shape, bg_num, mode, 'bg')
+                    # print(bgs.shape, bg_num, mode, 'bg')
                     _, inds = bgs.topk(bg_num)
                     bg_inds = bg_inds[inds]
                     new_mask[bg_inds] = True
                 else:
+                    new_mask = fg_mask[i].new_zeros(fg_mask[i].shape, dtype=torch.bool)
                     fg_inds = (fg_mask[i]).nonzero().flatten()
                     fgs = obj[fg_mask[i]]
-                    print(fgs.shape, fg_num, mode, 'fg')
+                    # print(fgs.shape, fg_num, mode, 'fg')
                     _, inds = fgs.topk(num)
                     fg_inds = fg_inds[inds]
-                    new_masks[:] = False
                     new_mask[fg_inds] = True
                 new_masks.append(new_mask.nonzero().flatten())
                 new_fg_masks.append(fg_mask[i][new_mask])
@@ -164,13 +167,15 @@ class RelationYOLOX(nn.Module):
         m = len(data['ref'])
         if self.training:
             target_main, mlvl_preds, mlvl_ori_loc_preds = self.get_targets(data['main'], return_preds=True)
-            info_debug(target_main)
+            # info_debug(data['main'])
+            # info_debug(target_main)
             targets_ref = [self.get_targets(ref) for ref in data['ref']]
             fg_masks_main, target_range_main = self.get_fg_masks(target_main[5])
             fg_masks_ref, target_range_ref = zip(*[self.get_fg_masks(ref[5]) for ref in targets_ref])
         all_refined_preds = []
         all_refined_feats = []
         all_relation_stuffs = {}
+        all_fg_masks = []
         for lvl_idx, lvl_c in enumerate(self.inplanes):
             refined_lvl_preds = []
             refined_lvl_feats = []
@@ -181,6 +186,7 @@ class RelationYOLOX(nn.Module):
                 selected_ref, selected_fg_masks_ref = zip(
                     *[self.get_selected_indices(fg_masks_ref[i][lvl_idx], data['ref'][i]['preds'][lvl_idx][3], mode='ref') for i in range(m)])
                 selected_fg_masks_ref = torch.cat(selected_fg_masks_ref, dim=1)
+                all_fg_masks.append(selected_fg_masks)
             else:
                 selected_main = self.get_selected_indices(None, data['main']['preds'][lvl_idx][3])
                 selected_ref = [self.get_selected_indices(
@@ -190,8 +196,8 @@ class RelationYOLOX(nn.Module):
                 roi_feat = self.get_top_feats(roi_feat, selected_main)
                 roi_preds = self.get_top_feats(data['main']['preds'][lvl_idx][idx], selected_main)
                 if relation_idx < 0:
-                    refined_lvl_preds.append(roi_preds)
-                    refined_lvl_feats.append(roi_feat)
+                    refined_lvl_preds.append(roi_preds.permute(0, 2, 1).unsqueeze(-1))
+                    refined_lvl_feats.append(roi_feat.permute(0, 2, 1).unsqueeze(-1))
                 else:
                     roi_feat_ref = [self.get_top_feats(data['ref'][i]['roi_features']
                                                        [lvl_idx][idx], selected_ref[i]) for i in range(m)]
@@ -208,18 +214,19 @@ class RelationYOLOX(nn.Module):
                     else:
                         refined_feats = self.relation_modules[lvl_idx][relation_idx](
                             roi_feat, roi_feat_ref, original_preds=roi_preds)
+                    refined_feats = refined_feats.permute(0, 2, 1).unsqueeze(-1)
                     refined_lvl_pred = getattr(
-                        self, self.roi_features_mappings[idx] + '_preds')[lvl_idx](refined_feats.permute(0, 2, 1).unsqueeze(-1))
+                        self, self.roi_features_mappings[idx] + '_preds')[lvl_idx](refined_feats)
                     refined_lvl_preds.append(refined_lvl_pred)
                     refined_lvl_feats.append(refined_feats)
-            all_refined_preds.append(refined_lvl_pred)
+            all_refined_preds.append(refined_lvl_preds)
             all_refined_feats.append(refined_lvl_feats)
         if self.training:
             if not self.post_module.use_l1:
                 losses_rpn = self.post_module.get_loss(target_main, mlvl_preds)
             else:
                 losses_rpn = self.post_module.get_loss(target_main, mlvl_preds, mlvl_ori_loc_preds)
-            losses_refined = self.get_loss(target_main, selected_fg_masks, all_refined_preds, all_refined_feats)
+            losses_refined = self.get_loss(target_main, all_fg_masks, all_refined_preds, all_refined_feats)
             losses = {}
             losses.update(all_relation_stuffs)
             losses.update(losses_rpn)
@@ -230,3 +237,19 @@ class RelationYOLOX(nn.Module):
                 all_refined_preds = self.apply_activation(all_refined_preds)
                 results = self.predictor.predict(all_refined_preds)
                 return results
+
+    def get_loss(self, target, fg_masks, mlvl_preds, features):
+        # info_debug(mlvl_preds)
+        fg_masks = torch.cat(fg_masks, dim=1)
+        mlvl_preds, mlvl_shapes = self.post_module.permute_preds(mlvl_preds)
+        preds = list(zip(*mlvl_preds))
+        losses = {}
+        for idx in self.relation_indices:
+            feat_name = self.roi_features_mappings[idx]
+            pred = preds[idx]
+            pred = torch.cat(pred, dim=1)
+            target_this = torch.cat(target[idx], dim=0)
+            # print(pred.shape, feat_name)
+            loss = getattr(self, feat_name + '_loss')(pred[fg_masks], target_this)
+            losses[self.prefix + '.' + feat_name + '_loss'] = loss
+        return losses
