@@ -67,7 +67,7 @@ class MOTDataLoader(BaseDataLoader):
         gt_bboxes = [_.get('gt_bboxes', None) for _ in batch]
         gt_ignores = [_.get('gt_ignores', None) for _ in batch]
 
-        output = EasyDict({
+        output = {
             'image': images,
             'image_info': image_info,
             'image_id': image_ids,
@@ -75,7 +75,7 @@ class MOTDataLoader(BaseDataLoader):
             'flipped': flipped,
             'neg_targets': neg_targets,
             'image_sources': image_sources,
-        })
+        }
 
         output['gt_bboxes'] = gt_bboxes if gt_bboxes[0] is not None else None
         output['gt_ignores'] = gt_ignores if gt_ignores[0] is not None else None
