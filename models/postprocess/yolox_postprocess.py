@@ -63,7 +63,7 @@ class YoloxwIDPostProcess(nn.Module):
         mlvl_activated_preds = []
         for lvl_idx, preds in enumerate(mlvl_preds):
             cls_pred = preds[0].sigmoid()
-            obj_pred = preds[2].sigmoid()
+            obj_pred = preds[3].sigmoid()
             cls_pred *= obj_pred
             mlvl_activated_preds.append((cls_pred, *preds[1:]))
         return mlvl_activated_preds
@@ -153,8 +153,10 @@ class YoloxwIDPostProcess(nn.Module):
 
         cls_pred = cls_pred.reshape(-1, self.num_classes - 1)
         cls_loss = self.cls_loss(cls_pred[fg_masks], cls_targets, normalizer_override=num_fgs)
+        # print(cls_pred[fg_masks].shape, cls_targets.shape)
         id_pred = id_pred.reshape(-1, self.num_ids)
         id_loss = self.id_loss(id_pred[fg_masks], id_targets, normalizer_override=num_fgs)
+        # print(id_pred[fg_masks].shape, id_targets.shape)
         acc = self.get_acc(cls_pred[fg_masks], cls_targets)
         acc_id = self.get_acc(id_pred[fg_masks], id_targets)
 

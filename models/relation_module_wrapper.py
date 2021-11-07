@@ -12,11 +12,13 @@ __all__ = ['RelationYOLOX']
 @MODULE_ZOO_REGISTRY.register('relation_yolox')
 class RelationYOLOX(nn.Module):
 
-    def __init__(self, relation_cfgs, yolox_kwargs, inplanes):
+    def __init__(self, relation_cfgs, yolox_kwargs, inplanes, num_to_refine=1000, num_as_ref=500):
         super().__init__()
         self.prefix = self.__class__.__name__
         self.roi_features_mappings = {0: 'cls', 1: 'loc', 2: 'id'}
         self.inplanes = inplanes
+        self.num_to_refine = num_to_refine
+        self.num_as_ref = num_as_ref
         self.post_module = MODULE_ZOO_REGISTRY.build(dict(
             type='yolox_post_w_id',
             kwargs=yolox_kwargs,
@@ -50,6 +52,19 @@ class RelationYOLOX(nn.Module):
             loss = build_loss(relation_cfg['loss'])
             setattr(self, self.roi_features_mappings[relation_idx] + '_loss', loss)
             setattr(self, self.roi_features_mappings[relation_idx] + '_preds', mod_list)
+        self.obj_preds = nn.ModuleList()
+        for lvl_idx, lvl_c in enumerate(self.inplanes):
+            self.obj_preds.append(nn.Conv2d(
+                in_channels=lvl_c,
+                out_channels=1,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+            ))
+        for m in self.modules():
+            if isinstance(m, nn.BatchNorm2d):
+                m.eps = 1e-3
+                m.momentum = 0.03
 
     def get_targets(self, input, return_preds=False):
         features = input['features']
@@ -113,14 +128,24 @@ class RelationYOLOX(nn.Module):
 
     def get_selected_indices(self, fg_mask, objness, mode='main'):
         if mode == 'main':
-            num = min(fg_mask.size(1), 600)  # must larger than fg_num
+            if fg_mask is not None:
+                num = min(fg_mask.size(1), self.num_to_refine)  # must larger than fg_num
+            else:
+                num = self.num_to_refine
         else:
-            num = min(fg_mask.size(1), 600) // 2
+            if fg_mask is not None:
+                num = min(fg_mask.size(1), self.num_as_ref)
+            else:
+                num = self.num_as_ref
+        if mode == 'main' and fg_mask is not None:
+            fg_max = int(fg_mask.sum(dim=1).max())
+            num = max(num, fg_max)
         new_masks = []
         new_fg_masks = []
         if fg_mask is not None:
             for i in range(fg_mask.size(0)):
                 fg_num = int(fg_mask[i].sum())
+                assert mode != 'main' or fg_num <= num, str(fg_num) + ', ' + str(fg_mask[i].shape)
                 bg_num = num - fg_num
                 obj = objness[i].reshape(fg_mask[i].numel())
                 if bg_num > 0:
@@ -219,6 +244,7 @@ class RelationYOLOX(nn.Module):
                         self, self.roi_features_mappings[idx] + '_preds')[lvl_idx](refined_feats)
                     refined_lvl_preds.append(refined_lvl_pred)
                     refined_lvl_feats.append(refined_feats)
+            refined_lvl_preds.append(self.obj_preds[lvl_idx](refined_lvl_feats[0]))
             all_refined_preds.append(refined_lvl_preds)
             all_refined_feats.append(refined_lvl_feats)
         if self.training:
@@ -234,8 +260,8 @@ class RelationYOLOX(nn.Module):
             return losses
         else:
             with torch.no_grad():
-                all_refined_preds = self.apply_activation(all_refined_preds)
-                results = self.predictor.predict(all_refined_preds)
+                all_refined_preds = self.post_module.apply_activation(mlvl_preds)
+                results = self.post_module.predictor.predict(mlvl_preds)
                 return results
 
     def get_loss(self, target, fg_masks, mlvl_preds, features):
@@ -249,7 +275,9 @@ class RelationYOLOX(nn.Module):
             pred = preds[idx]
             pred = torch.cat(pred, dim=1)
             target_this = torch.cat(target[idx], dim=0)
-            # print(pred.shape, feat_name)
+            # print(pred.shape, feat_name, pred[fg_masks].shape, target_this.shape)
             loss = getattr(self, feat_name + '_loss')(pred[fg_masks], target_this)
             losses[self.prefix + '.' + feat_name + '_loss'] = loss
+        losses[self.prefix
+               + '.obj_loss'] = self.post_module.obj_loss(torch.cat(preds[3], dim=1).flatten(), fg_masks.flatten())
         return losses
