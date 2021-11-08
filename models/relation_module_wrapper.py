@@ -254,7 +254,7 @@ class RelationYOLOX(nn.Module):
                         for k, v in relation_stuffs.items():
                             all_relation_stuffs['relation.%d.%d.%s' % (lvl_idx, relation_idx, k)] = v
                     else:
-                        refined_feats = self.relation_modules[lvl_idx][relation_idx](
+                        refined_feats, _ = self.relation_modules[lvl_idx][relation_idx](
                             roi_feat, roi_feat_ref, original_preds=roi_preds)
                     refined_feats = refined_feats.permute(0, 2, 1).unsqueeze(-1)
                     refined_lvl_pred = getattr(
