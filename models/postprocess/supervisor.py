@@ -184,6 +184,7 @@ class OTAwIDMatcher(object):
 
         if mode == "cpu":
             gt_matched_classes = gt_matched_classes.cuda()
+            gt_matched_ids = gt_matched_ids.cuda()
             fg_mask = fg_mask.cuda()
             pred_ious_this_matching = pred_ious_this_matching.cuda()
             matched_gt_inds = matched_gt_inds.cuda()
