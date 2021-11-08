@@ -93,7 +93,10 @@ class RelationYOLOX(nn.Module):
             else:
                 mlvl_preds[l_ix][1][..., 2:4] = torch.exp(mlvl_preds[l_ix][1][..., 2:4]) * strides[l_ix]
 
-        targets = self.post_module.supervisor.get_targets(mlvl_locations, input, mlvl_preds)
+        if self.training:
+            targets = self.post_module.supervisor.get_targets(mlvl_locations, input, mlvl_preds)
+        else:
+            targets = None
         if return_preds:
             return targets, mlvl_preds, mlvl_ori_loc_preds
         else:
@@ -197,6 +200,8 @@ class RelationYOLOX(nn.Module):
             targets_ref = [self.get_targets(ref) for ref in data['ref']]
             fg_masks_main, target_range_main = self.get_fg_masks(target_main[5])
             fg_masks_ref, target_range_ref = zip(*[self.get_fg_masks(ref[5]) for ref in targets_ref])
+        else:
+            _, mlvl_preds, mlvl_ori_loc_preds = self.get_targets(data['main'], return_preds=True)
         all_refined_preds = []
         all_refined_feats = []
         all_relation_stuffs = {}

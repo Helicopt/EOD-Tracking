@@ -80,6 +80,8 @@ class YoloxwIDPostProcess(nn.Module):
         return mlvl_permuted_preds, mlvl_shapes
 
     def forward(self, input):
+        if 'main' in input and 'ref' in input:
+            input = input['main']
         features = input['features']
         strides = input['strides']
         mlvl_preds = input['preds']
