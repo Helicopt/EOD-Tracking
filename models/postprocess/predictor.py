@@ -17,8 +17,8 @@ class YoloXwIDPredictor(object):
 
     @torch.no_grad()
     def predict(self, preds):
-        id_features = preds[2]
-        preds = preds[0], preds[1], preds[3]
+        id_features = [p[2] for p in preds]
+        preds = [(p[0], p[1], p[3]) for p in preds]
         max_wh = 4096
         preds = [torch.cat(p, dim=2) for p in preds]
         preds = torch.cat(preds, dim=1)
