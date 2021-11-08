@@ -21,6 +21,7 @@ class YoloxwIDPostProcess(nn.Module):
     def __init__(self,
                  num_classes,
                  num_ids,
+                 inplanes,
                  cfg,
                  norm_on_bbox=False,
                  all_reduce_norm=True,
@@ -29,6 +30,7 @@ class YoloxwIDPostProcess(nn.Module):
         self.prefix = self.__class__.__name__
         self.num_classes = num_classes
         self.num_ids = num_ids
+        self.inplanes = inplanes
         self.tocaffe = False
         self.norm_on_bbox = norm_on_bbox
         test_cfg = copy.deepcopy(cfg)

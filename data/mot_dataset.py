@@ -36,6 +36,7 @@ class MultiFrameDataset(CustomDataset):
                  image_reader,
                  transformer,
                  num_classes,
+                 num_ids=None,
                  num_expected=6,
                  frame_involved=12,
                  add_self=False,
@@ -45,6 +46,7 @@ class MultiFrameDataset(CustomDataset):
                  evaluator=None,
                  label_mapping=None):
         self.id_cnt = 0
+        self.num_ids = num_ids
         self.test_mode = test_mode
         self.is_train = not test_mode
         self.num_expected = num_expected
@@ -115,7 +117,7 @@ class MultiFrameDataset(CustomDataset):
         #     self._set_group_flag()
         # processing pipeline
         # self.pipeline = Compose(pipeline)
-
+        assert self.num_ids is None or self.id_cnt < self.num_ids, 'num_ids in config is less than actual id_cnt loaded'
         logger.info('---- %d items in total, %d IDs' % (len(self.metas), self.id_cnt))
 
     def get_input(self, idx):
