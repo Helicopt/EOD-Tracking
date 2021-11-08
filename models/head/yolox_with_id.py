@@ -148,7 +148,7 @@ class YoloXHeadwID(nn.Module):
             self.id_preds.append(
                 nn.Conv2d(
                     in_channels=outplane,
-                    out_channels=num_ids,
+                    out_channels=self.num_point * num_ids,
                     kernel_size=1,
                     stride=1,
                     padding=0,
@@ -190,6 +190,11 @@ class YoloXHeadwID(nn.Module):
 
     def initialize_biases(self, prior_prob):
         for conv in self.cls_preds:
+            b = conv.bias.view(self.num_point, -1)
+            b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
+            conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
+
+        for conv in self.id_preds:
             b = conv.bias.view(self.num_point, -1)
             b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
             conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)

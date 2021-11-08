@@ -1,7 +1,9 @@
 import copy
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.distributed as dist
 from eod.utils.general.registry_factory import MODULE_ZOO_REGISTRY
 from eod.models.losses import build_loss
 from ..utils.debug import info_debug
@@ -19,6 +21,7 @@ class RelationYOLOX(nn.Module):
         self.inplanes = inplanes
         self.num_to_refine = num_to_refine
         self.num_as_ref = num_as_ref
+        yolox_kwargs.update({'inplanes': self.inplanes})
         self.post_module = MODULE_ZOO_REGISTRY.build(dict(
             type='yolox_post_w_id',
             kwargs=yolox_kwargs,
@@ -37,6 +40,7 @@ class RelationYOLOX(nn.Module):
                 lvl_relations.append(relation_module)
                 self.relation_indices[relation_cfg['index']] = idx
             self.relation_modules.append(lvl_relations)
+        prior_prob = 1e-2
         for relation_idx in self.relation_indices:
             mod_list = nn.ModuleList()
             for lvl_idx, lvl_c in enumerate(self.inplanes):
@@ -49,6 +53,10 @@ class RelationYOLOX(nn.Module):
                         padding=0,
                     )
                 )
+            for conv in mod_list:
+                b = conv.bias.view(1, -1)
+                b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
+                conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
             loss = build_loss(relation_cfg['loss'])
             setattr(self, self.roi_features_mappings[relation_idx] + '_loss', loss)
             setattr(self, self.roi_features_mappings[relation_idx] + '_preds', mod_list)
@@ -61,6 +69,10 @@ class RelationYOLOX(nn.Module):
                 stride=1,
                 padding=0,
             ))
+        for conv in self.obj_preds:
+            b = conv.bias.view(1, -1)
+            b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
+            conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
         for m in self.modules():
             if isinstance(m, nn.BatchNorm2d):
                 m.eps = 1e-3
@@ -275,14 +287,21 @@ class RelationYOLOX(nn.Module):
         mlvl_preds, mlvl_shapes = self.post_module.permute_preds(mlvl_preds)
         preds = list(zip(*mlvl_preds))
         losses = {}
+        if self.post_module.all_reduce_norm and dist.is_initialized():
+            num_fgs = self.post_module.get_ave_normalizer(fg_masks)
+        else:
+            num_fgs = fg_masks.sum().item()
+        num_fgs = max(num_fgs, 1)
         for idx in self.relation_indices:
             feat_name = self.roi_features_mappings[idx]
             pred = preds[idx]
             pred = torch.cat(pred, dim=1)
             target_this = torch.cat(target[idx], dim=0)
             # print(pred.shape, feat_name, pred[fg_masks].shape, target_this.shape)
-            loss = getattr(self, feat_name + '_loss')(pred[fg_masks], target_this)
+            loss = getattr(self, feat_name + '_loss')(pred[fg_masks], target_this, normalizer_override=num_fgs)
             losses[self.prefix + '.' + feat_name + '_loss'] = loss
-        losses[self.prefix
-               + '.obj_loss'] = self.post_module.obj_loss(torch.cat(preds[3], dim=1).flatten(), fg_masks.flatten())
+        losses[self.prefix + '.obj_loss'] = self.post_module.obj_loss(
+            torch.cat(preds[3], dim=1).flatten(),
+            fg_masks.flatten(),
+            normalizer_override=num_fgs)
         return losses
