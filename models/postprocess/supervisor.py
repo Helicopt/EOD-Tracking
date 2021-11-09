@@ -91,7 +91,7 @@ class OTAwIDSupervisor(object):
             else:
                 fg_mask = preds.new_zeros(preds.shape[0], dtype=torch.bool)
                 cls_target = preds.new_zeros((0, self.num_classes))
-                id_target = preds.new_zeros((0,), dtype=torch.int64)
+                id_target = preds.new_zeros((0, self.num_ids), dtype=torch.int64)
                 reg_target = preds.new_zeros((0, 4))
                 obj_target = preds.new_zeros((fg_mask.shape[0], 1)).to(torch.bool)
                 l1_target = preds.new_zeros((0, 4))

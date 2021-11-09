@@ -33,6 +33,7 @@ class RelationYOLOX(nn.Module):
         for lvl_idx in range(len(self.inplanes)):
             lvl_relations = nn.ModuleList()
             for idx, relation_cfg in enumerate(relation_cfgs):
+                relation_cfg['kwargs']['embed_dim'] = self.inplanes[lvl_idx]
                 relation_module = MODULE_ZOO_REGISTRY.build(dict(
                     type=relation_cfg['type'],
                     kwargs=relation_cfg['kwargs'],
