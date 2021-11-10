@@ -61,7 +61,7 @@ class SQGARelaton(nn.Module):
         qlt_target = target[0].float()
         b, n, c = ori_preds.shape
         for i in range(b):
-            diff = torch.abs(ori_preds[i][target[0][i]] - target[1][i])
+            diff = torch.abs(ori_preds[i][target[0][i]] - target[1][i]).float()
             # print(ori_preds_[i][target[0][i]][:50], target[1][i][:50])
             if diff.size(0) > 0:
                 diff_max, _ = diff.max(dim=1)
