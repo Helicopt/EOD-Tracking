@@ -47,10 +47,13 @@ class SQGARelaton(nn.Module):
             main_feats.permute(1, 0, 2), real_ref_feats.permute(1, 0, 2), real_ref_feats.permute(1, 0, 2), attn_mask=valid_mask)
         attention = attention.permute(1, 0, 2)
         refined_feats = self.norm(main_feats + self.dropout(attention))
-        qlt_loss = self.get_qlt_loss(qlt_main, original_preds, target_main)
-        affinities = affinities[:, :, :m]
-        sim_loss = self.get_sim_loss(affinities, target_main, target_ref)
-        return refined_feats, {'sim_loss': sim_loss, 'qlt_loss': qlt_loss}  # {'affinities': affinities}
+        if self.training:
+            qlt_loss = self.get_qlt_loss(qlt_main, original_preds, target_main)
+            affinities = affinities[:, :, :m]
+            sim_loss = self.get_sim_loss(affinities, target_main, target_ref)
+            return refined_feats, {'sim_loss': sim_loss, 'qlt_loss': qlt_loss}  # {'affinities': affinities}
+        else:
+            return refined_feats, {}
 
     def get_qlt_loss(self, qlt_preds, ori_preds, target):
         # ori_preds_ = ori_preds
