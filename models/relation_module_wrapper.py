@@ -142,7 +142,7 @@ class RelationYOLOX(nn.Module):
             prev += now
         return lvl_masks, target_range
 
-    def get_selected_indices(self, fg_mask, objness, mode='main'):
+    def get_selected_indices(self, fg_mask, target_range, objness, mode='main'):
         if mode == 'main':
             if fg_mask is not None:
                 num = min(fg_mask.size(1), self.num_to_refine)  # must larger than fg_num
@@ -158,11 +158,13 @@ class RelationYOLOX(nn.Module):
             num = max(num, fg_max)
         new_masks = []
         new_fg_masks = []
+        new_gt_inds = []
         if fg_mask is not None:
             for i in range(fg_mask.size(0)):
                 fg_num = int(fg_mask[i].sum())
                 assert mode != 'main' or fg_num <= num, str(fg_num) + ', ' + str(fg_mask[i].shape)
                 bg_num = num - fg_num
+                assert fg_mask[i].nonzero().numel() == target_range[i][1] - target_range[i][0]
                 obj = objness[i].reshape(fg_mask[i].numel())
                 if bg_num > 0:
                     new_mask = fg_mask[i].clone()
@@ -172,6 +174,7 @@ class RelationYOLOX(nn.Module):
                     _, inds = bgs.topk(bg_num)
                     bg_inds = bg_inds[inds]
                     new_mask[bg_inds] = True
+                    gt_inds = torch.arange(target_range[i][0], target_range[i][1]).to(fg_mask.device)
                 else:
                     new_mask = fg_mask[i].new_zeros(fg_mask[i].shape, dtype=torch.bool)
                     fg_inds = (fg_mask[i]).nonzero().flatten()
@@ -180,11 +183,14 @@ class RelationYOLOX(nn.Module):
                     _, inds = fgs.topk(num)
                     fg_inds = fg_inds[inds]
                     new_mask[fg_inds] = True
+                    inds = inds.sort()[0]
+                    gt_inds = target_range[i][0] + inds
+                new_gt_inds.append(gt_inds)
                 new_masks.append(new_mask.nonzero().flatten())
                 new_fg_masks.append(fg_mask[i][new_mask])
             new_masks = torch.stack(new_masks)
             new_fg_masks = torch.stack(new_fg_masks)
-            return new_masks, new_fg_masks
+            return new_masks, new_fg_masks, new_gt_inds
         else:
             objness = objness.reshape(objness.size(0), -1)
             _, inds = objness.topk(num, dim=1)
@@ -198,11 +204,11 @@ class RelationYOLOX(nn.Module):
         feats = feats.permute(0, 2, 3, 1).reshape(b, h * w, c)
         return torch.gather(feats, 1, indices.unsqueeze(-1).repeat(1, 1, c))
 
-    def get_range(self, target, ranges):
-        ret = []
-        for t, r in zip(target, ranges):
-            ret.append(t[r[0]: r[1]])
-        return ret
+    # def get_range(self, target, ranges):
+    #     ret = []
+    #     for t, r in zip(target, ranges):
+    #         ret.append(t[r[0]: r[1]])
+    #     return ret
 
     def forward(self, data):
         m = len(data['ref'])
@@ -210,7 +216,10 @@ class RelationYOLOX(nn.Module):
             target_main, mlvl_preds, mlvl_ori_loc_preds = self.get_targets(data['main'], return_preds=True)
             # info_debug(data['main'])
             # info_debug(target_main)
+            # info_debug(mlvl_preds)
             targets_ref = [self.get_targets(ref) for ref in data['ref']]
+            ref_pred0 = data['ref'][0]['preds'][0][0][0].reshape(-1)
+            # print(ref_pred0[targets_ref[0][5][0][:ref_pred0.size(0)]][:50], targets_ref[0][0][0][:50], '0~~~')
             fg_masks_main, target_range_main = self.get_fg_masks(target_main[5])
             fg_masks_ref, target_range_ref = zip(*[self.get_fg_masks(ref[5]) for ref in targets_ref])
         else:
@@ -224,16 +233,22 @@ class RelationYOLOX(nn.Module):
             refined_lvl_feats = []
             main_roi_feats = data['main']['roi_features'][lvl_idx]
             if self.training:
-                selected_main, selected_fg_masks = self.get_selected_indices(
-                    fg_masks_main[lvl_idx], data['main']['preds'][lvl_idx][3])
-                selected_ref, selected_fg_masks_ref = zip(
-                    *[self.get_selected_indices(fg_masks_ref[i][lvl_idx], data['ref'][i]['preds'][lvl_idx][3], mode='ref') for i in range(m)])
+                selected_main, selected_fg_masks, selected_gt_idx = self.get_selected_indices(
+                    fg_masks_main[lvl_idx], target_range_main[lvl_idx], data['main']['preds'][lvl_idx][3])
+                selected_ref, selected_fg_masks_ref, selected_gt_idx_ref = zip(
+                    *[self.get_selected_indices(fg_masks_ref[i][lvl_idx], target_range_ref[i][lvl_idx], data['ref'][i]['preds'][lvl_idx][3], mode='ref') for i in range(m)])
+                # if lvl_idx == 0:
+                #     ref_pred0 = data['ref'][0]['preds'][0][0]
+                #     ref_pred0 = self.get_top_feats(ref_pred0, selected_ref[0])
+                #     print(selected_gt_idx_ref[0][0].shape, targets_ref[0][0][0].shape)
+                #     print(ref_pred0[0][selected_fg_masks_ref[0][0]][:50],
+                #           targets_ref[0][0][0][selected_gt_idx_ref[0][0]][:50], 're~~~')
                 selected_fg_masks_ref = torch.cat(selected_fg_masks_ref, dim=1)
                 all_fg_masks.append(selected_fg_masks)
             else:
-                selected_main = self.get_selected_indices(None, data['main']['preds'][lvl_idx][3])
+                selected_main = self.get_selected_indices(None, None, data['main']['preds'][lvl_idx][3])
                 selected_ref = [self.get_selected_indices(
-                    None, data['ref'][i]['preds'][lvl_idx][3], mode='ref') for i in range(m)]
+                    None, None, data['ref'][i]['preds'][lvl_idx][3], mode='ref') for i in range(m)]
             for idx, roi_feat in enumerate(main_roi_feats):
                 relation_idx = self.relation_indices.get(idx, -1)
                 roi_feat = self.get_top_feats(roi_feat, selected_main)
@@ -247,9 +262,13 @@ class RelationYOLOX(nn.Module):
                     roi_feat_ref = torch.cat(roi_feat_ref, dim=1)
                     if self.training:
                         target_this = target_main[idx]
-                        target_this = self.get_range(target_this, target_range_main[lvl_idx])
-                        target_ref = [torch.cat(o, dim=0) for o in zip(
-                            *[self.get_range(targets_ref[i][idx], target_range_ref[i][lvl_idx]) for i in range(m)])]
+                        # target_this = self.get_range(target_this, target_range_main[lvl_idx])
+                        target_this = [t[gi] for t, gi in zip(target_this, selected_gt_idx)]
+                        # target_ref = [torch.cat(o, dim=0) for o in zip(
+                        #     *[self.get_range(targets_ref[i][idx], target_range_ref[i][lvl_idx]) for i in range(m)])]
+                        target_ref_splits = [[t[gi] for t, gi in zip(
+                            targets_ref[i][idx], selected_gt_idx_ref[i])] for i in range(m)]
+                        target_ref = [torch.cat(o, dim=0) for o in zip(*target_ref_splits)]
                         refined_feats, relation_stuffs = self.relation_modules[lvl_idx][relation_idx](roi_feat, roi_feat_ref, target_main=(
                             selected_fg_masks, target_this), target_ref=(selected_fg_masks_ref, target_ref), original_preds=roi_preds)
                         for k, v in relation_stuffs.items():
@@ -275,6 +294,7 @@ class RelationYOLOX(nn.Module):
             losses.update(all_relation_stuffs)
             losses.update(losses_rpn)
             losses.update(losses_refined)
+            # print(losses)
             return losses
         else:
             with torch.no_grad():
@@ -299,6 +319,7 @@ class RelationYOLOX(nn.Module):
             pred = torch.cat(pred, dim=1)
             target_this = torch.cat(target[idx], dim=0)
             # print(pred.shape, feat_name, pred[fg_masks].shape, target_this.shape)
+            # print(pred.mean(), target_this.mean())
             loss = getattr(self, feat_name + '_loss')(pred[fg_masks], target_this, normalizer_override=num_fgs)
             losses[self.prefix + '.' + feat_name + '_loss'] = loss
         losses[self.prefix + '.obj_loss'] = self.post_module.obj_loss(
