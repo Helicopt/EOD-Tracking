@@ -53,6 +53,10 @@ class RelationYOLOX(nn.Module):
                     stride=1,
                     padding=0,
                 )
+                for conv in [mod_list]:
+                    b = conv.bias.view(1, -1)
+                    b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
+                    conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
             else:
                 mod_list = nn.ModuleList()
                 for lvl_idx, lvl_c in enumerate(self.inplanes):
