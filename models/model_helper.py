@@ -38,6 +38,9 @@ class MOTModelHelper(ModelHelper):
                 del output['ref']
             else:
                 if 'main' in input and 'ref' in input:
-                    input = input['main']
+                    main = input['main']
+                    del input['main']
+                    del input['ref']
+                    input.update(main)
                 input.update(output)
         return input

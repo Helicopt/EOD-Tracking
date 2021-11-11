@@ -81,9 +81,7 @@ class YoloxwIDPostProcess(nn.Module):
             mlvl_shapes.append((h, w, k))
         return mlvl_permuted_preds, mlvl_shapes
 
-    def forward(self, input):
-        if 'main' in input and 'ref' in input:
-            input = input['main']
+    def prepare_preds(self, input):
         features = input['features']
         strides = input['strides']
         mlvl_preds = input['preds']
@@ -109,6 +107,13 @@ class YoloxwIDPostProcess(nn.Module):
                 mlvl_preds[l_ix][1][..., 2:4] *= strides[l_ix]
             else:
                 mlvl_preds[l_ix][1][..., 2:4] = torch.exp(mlvl_preds[l_ix][1][..., 2:4]) * strides[l_ix]
+        return mlvl_preds, mlvl_locations, mlvl_ori_loc_preds
+
+    def forward(self, input):
+        if 'main' in input and 'ref' in input:
+            input = input['main']
+
+        mlvl_preds, mlvl_locations, mlvl_ori_loc_preds = self.prepare_preds(input)
 
         if self.training:
             targets = self.supervisor.get_targets(mlvl_locations, input, mlvl_preds)
@@ -118,9 +123,10 @@ class YoloxwIDPostProcess(nn.Module):
                 losses = self.get_loss(targets, mlvl_preds, mlvl_ori_loc_preds)
             return losses
         else:
+            id_feats = [lvl_feats[2] for lvl_feats in input['roi_features']]
             with torch.no_grad():
                 mlvl_preds = self.apply_activation(mlvl_preds)
-                results = self.predictor.predict(mlvl_preds)
+                results = self.predictor.predict(mlvl_preds, id_feats)
                 return results
 
     def get_acc(self, cls_pred, cls_targets):

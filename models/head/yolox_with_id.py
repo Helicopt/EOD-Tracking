@@ -145,15 +145,6 @@ class YoloXHeadwID(nn.Module):
                     padding=0,
                 )
             )
-            self.id_preds.append(
-                nn.Conv2d(
-                    in_channels=outplane,
-                    out_channels=self.num_point * num_ids,
-                    kernel_size=1,
-                    stride=1,
-                    padding=0,
-                )
-            )
             self.obj_preds.append(
                 nn.Conv2d(
                     in_channels=outplane,
@@ -163,6 +154,13 @@ class YoloXHeadwID(nn.Module):
                     padding=0,
                 )
             )
+        self.id_preds = nn.Conv2d(
+            in_channels=outplane,
+            out_channels=self.num_point * num_ids,
+            kernel_size=1,
+            stride=1,
+            padding=0,
+        )
 
         if initializer is not None:
             initialize_from_cfg(self, initializer)
@@ -182,7 +180,7 @@ class YoloXHeadwID(nn.Module):
             id_feat = self.id_convs[i](feat)
             cls_pred = self.cls_preds[i](cls_feat)
             loc_pred = self.reg_preds[i](loc_feat)
-            id_pred = self.id_preds[i](id_feat)
+            id_pred = self.id_preds(id_feat)
             obj_pred = self.obj_preds[i](loc_feat)
             mlvl_preds.append((cls_pred, loc_pred, id_pred, obj_pred))
             mlvl_roi_features.append((cls_feat, loc_feat, id_feat))
@@ -194,7 +192,7 @@ class YoloXHeadwID(nn.Module):
             b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
             conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
 
-        for conv in self.id_preds:
+        for conv in [self.id_preds]:
             b = conv.bias.view(self.num_point, -1)
             b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
             conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)

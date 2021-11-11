@@ -18,6 +18,8 @@ from eod.data.datasets.custom_dataset import CustomDataset
 
 from eod.data.data_utils import get_image_size
 
+from torch.nn.modules.utils import _pair
+
 __all__ = ['MultiFrameDataset']
 
 
@@ -43,7 +45,9 @@ class MultiFrameDataset(CustomDataset):
                  random_select=True,
                  repeat_to=None,
                  test_mode=False,
+                 online=False,
                  evaluator=None,
+                 clip=True,
                  label_mapping=None):
         self.id_cnt = 0
         self.num_ids = num_ids
@@ -54,6 +58,8 @@ class MultiFrameDataset(CustomDataset):
         self.add_self = add_self
         self.random_select = random_select
         self.repeat_num = repeat_to
+        self.online = online
+        self.clip = clip
         super(MultiFrameDataset, self).__init__(
             meta_file, image_reader, transformer, num_classes,
             evaluator=evaluator, label_mapping=label_mapping)
@@ -79,7 +85,7 @@ class MultiFrameDataset(CustomDataset):
                         if track_id not in self.id_mapping[seq_name]:
                             self.id_mapping[seq_name][track_id] = self.next_id
                         instance['track_id'] = self.id_mapping[seq_name][track_id]
-                    self.sequences[seq_name][frame_id] = data
+                    self.sequences[seq_name][frame_id] = len(self.metas)
                     if self.label_mapping is not None:
                         data = self.set_label_mapping(data, self.label_mapping[idx], 0)
                         data['image_source'] = idx
@@ -91,7 +97,13 @@ class MultiFrameDataset(CustomDataset):
                         self.aspect_ratios.append(1.0)
                     else:
                         self.aspect_ratios.append(data['image_height'] / data['image_width'])
-
+        self.seq_controls = {}
+        for seq in self.sequences:
+            frs = list(self.sequences[seq].keys())
+            self.seq_controls[seq] = {
+                'begin': min(frs),
+                'end': max(frs),
+            }
         # load annotations (and proposals)
         # self.img_infos = self.load_annotations(self.ann_file)
         # self.img_infos = self.make_items(self.img_infos)
@@ -129,7 +141,7 @@ class MultiFrameDataset(CustomDataset):
     def get_input_by_seq_frame(self, seq_name, frame, idx):
         """parse annotation into input dict
         """
-        data = self.sequences[seq_name][frame]
+        data = self.metas[self.sequences[seq_name][frame]]
         return self._get_input(data, idx)
 
     def _get_input(self, data, idx):
@@ -219,7 +231,64 @@ class MultiFrameDataset(CustomDataset):
         input_ref = [self.prepare_input(o) for o in input_ref]
         if self.add_self:
             input_ref.append(input_main)
-        return {'main': input_main, 'ref': input_ref}
+        return {
+            'main': input_main, 'ref': input_ref,
+            'begin_flag': frame_id == self.seq_controls[seq_name]['begin'],
+            'end_flag': frame_id == self.seq_controls[seq_name]['end'],
+        }
+
+    @property
+    def all_sequences(self):
+        seqs = sorted(self.sequences.keys())
+        ret = {}
+        for seq in seqs:
+            frs = sorted(self.sequences[seq].keys())
+            ret[seq] = [self.sequences[seq][fr] for fr in frs]
+        return ret
+
+    def dump(self, output):
+        image_info = output['image_info']
+        bboxes = self.tensor2numpy(output['dt_bboxes'])
+        image_ids = output['image_id']
+        out_res = []
+        for b_ix in range(len(image_info)):
+            info = image_info[b_ix]
+            height, width = map(int, info[3:5])
+            img_id = image_ids[b_ix]
+            scores = bboxes[:, 5]
+            keep_ix = np.where(bboxes[:, 0] == b_ix)[0]
+            keep_ix = sorted(keep_ix, key=lambda ix: scores[ix], reverse=True)
+            scale_h, scale_w = _pair(info[2])
+            img_bboxes = bboxes[keep_ix].copy()
+            # sub pad
+            pad_w, pad_h = info[6], info[7]
+            img_bboxes[:, [1, 3]] -= pad_w
+            img_bboxes[:, [2, 4]] -= pad_h
+            # clip
+            if self.clip:
+                np.clip(img_bboxes[:, [1, 3]], 0, info[1], out=img_bboxes[:, [1, 3]])
+                np.clip(img_bboxes[:, [2, 4]], 0, info[0], out=img_bboxes[:, [2, 4]])
+            img_bboxes[:, 1] /= scale_w
+            img_bboxes[:, 2] /= scale_h
+            img_bboxes[:, 3] /= scale_w
+            img_bboxes[:, 4] /= scale_h
+
+            for i in range(len(img_bboxes)):
+                box_score, cls = img_bboxes[i][5:7]
+                bbox = img_bboxes[i].copy()
+                score = float(box_score)
+                res = {
+                    'height': height,
+                    'width': width,
+                    'image_id': img_id,
+                    'bbox': bbox[1: 1 + 4].tolist(),
+                    'score': score,
+                    'label': int(cls)
+                }
+                if img_bboxes.shape[1] >= 8:
+                    res['track_id'] = int(img_bboxes[i][8])
+                out_res.append(res)
+        return out_res
 
     # def make_items(self, img_infos):
     #     ret = []
