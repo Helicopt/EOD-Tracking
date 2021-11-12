@@ -69,4 +69,5 @@ class MotionAppearanceOnlineTracker(NoTracking):
         ids = torch.from_numpy(np.array(ids, dtype=np.float)).to(bboxes.device)
         output_dets = torch.cat([bboxes, ids], dim=1)
         inputs['dt_bboxes'] = output_dets
+        # print(output_dets[:10])
         return inputs

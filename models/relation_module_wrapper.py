@@ -242,9 +242,14 @@ class RelationYOLOX(nn.Module):
             for idx, roi_feat in enumerate(main_roi_feats):
                 relation_idx = self.relation_indices.get(idx, -1)
                 roi_feat = self.get_top_feats(roi_feat, selected_main)
-                roi_preds = self.get_top_feats(data['main']['preds'][lvl_idx][idx], selected_main)
+                if idx == 1:
+                    c = self.roi_pred_dims[idx]
+                    roi_preds = torch.gather(mlvl_preds[lvl_idx][idx], 1,
+                                             selected_main.unsqueeze(-1).repeat(1, 1, c))
+                else:
+                    roi_preds = self.get_top_feats(data['main']['preds'][lvl_idx][idx], selected_main)
                 if relation_idx < 0:
-                    refined_lvl_preds.append(roi_preds.permute(0, 2, 1).unsqueeze(-1))
+                    refined_lvl_preds.append(roi_preds)
                     refined_lvl_feats.append(roi_feat.permute(0, 2, 1).unsqueeze(-1))
                 else:
                     roi_feat_ref = [self.get_top_feats(data['ref'][i]['roi_features']
@@ -272,18 +277,19 @@ class RelationYOLOX(nn.Module):
                         refined_lvl_pred = pred_func[lvl_idx](refined_feats)
                     else:
                         refined_lvl_pred = pred_func(refined_feats)
-                    refined_lvl_preds.append(refined_lvl_pred)
+                    refined_lvl_preds.append(refined_lvl_pred.squeeze(-1).permute(0, 2, 1))
                     refined_lvl_feats.append(refined_feats)
-            refined_lvl_preds.append(self.obj_preds[lvl_idx](refined_lvl_feats[0]))
+            refined_lvl_preds.append(self.obj_preds[lvl_idx](refined_lvl_feats[0]).squeeze(-1).permute(0, 2, 1))
             all_refined_preds.append(refined_lvl_preds)
             all_refined_feats.append(refined_lvl_feats)
-        refined_mlvl_preds, refined_mlvl_locations, refined_mlvl_ori_loc_preds = self.post_module.prepare_preds(
-            {
-                'features': data['main']['features'],
-                'preds': all_refined_preds,
-                'strides': data['main']['strides'],
-            }
-        )
+        # refined_mlvl_preds, refined_mlvl_locations, refined_mlvl_ori_loc_preds = self.post_module.prepare_preds(
+        #     {
+        #         'features': data['main']['features'],
+        #         'preds': all_refined_preds,
+        #         'strides': data['main']['strides'],
+        #     }
+        # )
+        refined_mlvl_preds = all_refined_preds
         if self.training:
             losses_rpn = self.post_module.get_loss(target_main, mlvl_preds, mlvl_ori_loc_preds)
             losses_refined = self.get_loss(target_main, all_fg_masks, refined_mlvl_preds, all_refined_feats)
@@ -294,6 +300,8 @@ class RelationYOLOX(nn.Module):
             # print(losses)
             return losses
         else:
+            # print(mlvl_preds[0][1].shape, mlvl_preds[0][1][0, :10])
+            # print(refined_mlvl_preds[0][1].shape, refined_mlvl_preds[0][1][0, :10])
             if not self.use_rpn_result:
                 mlvl_preds = refined_mlvl_preds
                 mlvl_feats = all_refined_feats
