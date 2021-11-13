@@ -94,9 +94,13 @@ class MotionAppearanceOnlineTracker(NoTracking):
             g, gi = gt_ious.max(dim=1)
             gids = gtbboxes[:, 4][gi]
             gids[g < 0.5] = -1
+            raw_old_gids = [int(t.gid) for t in state.tracklets]
+            old_gids = set(raw_old_gids)
+            new_gids = {*[int(gid) for gid in gids]}
         dets = [trk.det for trk in state.tracklets]
         dfeats = [trk.feat for trk in state.tracklets]
-        if len(dets) > 0:
+        valid = {}
+        if len(dets) > 0 and len(bboxes) > 0:
             dets = torch.stack(dets)
             ious = bbox_overlaps(dets[:, :4], bboxes[:, :4])
             dfeats = torch.stack(dfeats)
@@ -105,30 +109,25 @@ class MotionAppearanceOnlineTracker(NoTracking):
             ious[sims > self.high_sim_thr] += 0.6
             ious[sims < self.low_sim_thr] -= 0.3
             mx, inds = ious.max(dim=1)
-        valid = {}
-        if gt is not None:
-            raw_old_gids = [int(t.gid) for t in state.tracklets]
-            old_gids = set(raw_old_gids)
-            new_gids = {*[int(gid) for gid in gids]}
-        sinds = sorted(list(range(len(dets))),
-                       key=lambda x: (mx[x]) if (state.tracklets[x].last == self.fr) else (mx[x] / 10.), reverse=True)
-        for i in range(len(dets)):
-            i = sinds[i]
-            matched = int(inds[i])
-            if mx[i] > 0.5 and valid.get(matched, -1) < 0:
-                state.tracklets[i].det = bboxes[matched]
-                state.tracklets[i].feat = embeds[matched]
-                state.tracklets[i].last = self.fr
-                if gt is not None:
-                    if state.tracklets[i].gid != gids[matched]:
-                        print(seq, self.fr, 'miss_met', state.tracklets[i].gid, gids[matched], mx[i],
-                              sims[i, matched], ious[i], sims[i])
-                    state.tracklets[i].gid = gids[matched]
-                valid[matched] = i
-            elif gt is not None:
-                if int(state.tracklets[i].gid) in new_gids and int(state.tracklets[i].gid) >= 0:
-                    print(seq, self.fr, 'unmet', state.tracklets[i].gid, mx[i],
-                          ious[i, matched], sims[i, matched], ious[i], sims[i])
+            sinds = sorted(list(range(len(dets))),
+                           key=lambda x: (mx[x]) if (state.tracklets[x].last == self.fr) else (mx[x] / 10.), reverse=True)
+            for i in range(len(dets)):
+                i = sinds[i]
+                matched = int(inds[i])
+                if mx[i] > 0.5 and valid.get(matched, -1) < 0:
+                    state.tracklets[i].det = bboxes[matched]
+                    state.tracklets[i].feat = embeds[matched]
+                    state.tracklets[i].last = self.fr
+                    if gt is not None:
+                        if state.tracklets[i].gid != gids[matched]:
+                            print(seq, self.fr, 'miss_met', state.tracklets[i].gid, gids[matched], mx[i],
+                                  sims[i, matched], ious[i], sims[i])
+                        state.tracklets[i].gid = gids[matched]
+                    valid[matched] = i
+                elif gt is not None:
+                    if int(state.tracklets[i].gid) in new_gids and int(state.tracklets[i].gid) >= 0:
+                        print(seq, self.fr, 'unmet', state.tracklets[i].gid, mx[i],
+                              ious[i, matched], sims[i, matched], ious[i], sims[i])
         ids = []
         for j in range(bboxes.size(0)):
             if j not in valid:
@@ -151,7 +150,10 @@ class MotionAppearanceOnlineTracker(NoTracking):
             if self.fr - t.last < self.interval:
                 new_tracklets.append(t)
         state.tracklets = new_tracklets
-        ids = torch.from_numpy(np.array(ids, dtype=np.float)).to(bboxes.device)
+        if len(ids) > 0:
+            ids = torch.from_numpy(np.array(ids, dtype=np.float)).to(bboxes.device)
+        else:
+            ids = bboxes.new_zeros((bboxes.size(0), 2))
         output_dets = torch.cat([bboxes, ids], dim=1)
         inputs['dt_bboxes'] = output_dets
         # print(output_dets[:10])
