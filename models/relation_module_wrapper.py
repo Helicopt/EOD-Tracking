@@ -132,12 +132,12 @@ class RelationYOLOX(nn.Module):
             prev += now
         return lvl_masks, target_range
 
-    def get_selected_indices(self, fg_mask, target_range, objness, mode='main'):
+    def get_selected_indices(self, fg_mask, target_range, objness, mode='main', stride=32):
         if mode == 'main':
             if fg_mask is not None:
                 num = min(fg_mask.size(1), self.num_to_refine)  # must larger than fg_num
             else:
-                num = self.num_to_refine
+                num = min(self.num_to_refine, objness.size(2) * objness.size(3))
         else:
             if fg_mask is not None:
                 num = min(fg_mask.size(1), self.num_as_ref)
@@ -182,8 +182,26 @@ class RelationYOLOX(nn.Module):
             new_fg_masks = torch.stack(new_fg_masks)
             return new_masks, new_fg_masks, new_gt_inds
         else:
-            objness = objness.reshape(objness.size(0), -1)
-            _, inds = objness.topk(num, dim=1)
+            if stride < 16:
+                ker = 3
+                objness_nms = F.max_pool2d(objness, ker, 1, 1, 1)
+                mask = objness_nms == objness
+            else:
+                mask = objness.new_ones(objness.shape, dtype=torch.bool)
+            all_inds = []
+            for i in range(objness.size(0)):
+                nms_indices = mask[i].flatten().nonzero().flatten()
+                other = (~mask[i]).flatten().nonzero().flatten()
+                objness_i = objness[i].flatten()[nms_indices]
+                # print(nms_indices.shape, objness_i.shape)
+                _, inds = objness_i.topk(min(num, objness_i.size(0)))
+                inds = nms_indices[inds]
+                if inds.size(0) < num:
+                    inds = torch.cat([inds, other[: num - inds.size(0)]])
+                all_inds.append(inds)
+            return torch.stack(all_inds)
+            # objness = objness.reshape(objness.size(0), -1)
+            # _, inds = objness.topk(num, dim=1)
             # mask = objness.new_zeros(objness.shape, dtype=torch.bool)
             return inds
 
@@ -224,9 +242,15 @@ class RelationYOLOX(nn.Module):
             main_roi_feats = data['main']['roi_features'][lvl_idx]
             if self.training:
                 selected_main, selected_fg_masks, selected_gt_idx = self.get_selected_indices(
-                    fg_masks_main[lvl_idx], target_range_main[lvl_idx], data['main']['preds'][lvl_idx][3])
+                    fg_masks_main[lvl_idx], target_range_main[lvl_idx], data['main']['preds'][lvl_idx][3], stride=data['main']['strides'][lvl_idx])
                 selected_ref, selected_fg_masks_ref, selected_gt_idx_ref = zip(
-                    *[self.get_selected_indices(fg_masks_ref[i][lvl_idx], target_range_ref[i][lvl_idx], data['ref'][i]['preds'][lvl_idx][3], mode='ref') for i in range(m)])
+                    *[self.get_selected_indices(
+                        fg_masks_ref[i][lvl_idx],
+                        target_range_ref[i][lvl_idx],
+                        data['ref'][i]['preds'][lvl_idx][3],
+                        mode='ref', stride=data['ref'][i]['strides'][lvl_idx]
+                    )
+                        for i in range(m)])
                 # if lvl_idx == 0:
                 #     ref_pred0 = data['ref'][0]['preds'][0][0]
                 #     ref_pred0 = self.get_top_feats(ref_pred0, selected_ref[0])
@@ -236,9 +260,10 @@ class RelationYOLOX(nn.Module):
                 selected_fg_masks_ref = torch.cat(selected_fg_masks_ref, dim=1)
                 all_fg_masks.append(selected_fg_masks)
             else:
-                selected_main = self.get_selected_indices(None, None, data['main']['preds'][lvl_idx][3])
+                selected_main = self.get_selected_indices(
+                    None, None, data['main']['preds'][lvl_idx][3], stride=data['main']['strides'][lvl_idx])
                 selected_ref = [self.get_selected_indices(
-                    None, None, data['ref'][i]['preds'][lvl_idx][3], mode='ref') for i in range(m)]
+                    None, None, data['ref'][i]['preds'][lvl_idx][3], mode='ref', stride=data['ref'][i]['strides'][lvl_idx]) for i in range(m)]
             for idx, roi_feat in enumerate(main_roi_feats):
                 relation_idx = self.relation_indices.get(idx, -1)
                 roi_feat = self.get_top_feats(roi_feat, selected_main)
