@@ -57,21 +57,25 @@ class SQGARelaton(nn.Module):
 
     def get_qlt_loss(self, qlt_preds, ori_preds, target):
         # ori_preds_ = ori_preds
-        ori_preds = torch.sigmoid(ori_preds)
         # info_debug(qlt_preds)
         # info_debug(ori_preds)
         # info_debug(target)
-        qlt_target = target[0].float()
-        b, n, c = ori_preds.shape
-        for i in range(b):
-            diff = torch.abs(ori_preds[i][target[0][i]] - target[1][i]).float()
-            # print(ori_preds_[i][target[0][i]][:50], target[1][i][:50])
-            if diff.size(0) > 0:
-                diff_max, _ = diff.max(dim=1)
-            else:
-                diff_max = diff.new_zeros((0, ))
-            qlt_target[i][target[0][i]] = 1 - diff_max
-        qlt_target[qlt_target < 0] = 0
+        with torch.no_grad():
+            ori_preds = torch.sigmoid(ori_preds).float()
+            qlt_target = ori_preds.max(dim=2)[0]
+            b, n, c = ori_preds.shape
+            for i in range(b):
+                fg_mask = target[0][i].clone()
+                mask = target[1][i][:, 0] <= 0
+                fg_mask[fg_mask.clone()] = mask
+                diff = torch.abs(ori_preds[i][fg_mask] - target[1][i][mask][:, 1:])
+                # print(ori_preds_[i][target[0][i]][:50], target[1][i][:50])
+                if diff.size(0) > 0:
+                    diff_max, _ = diff.max(dim=1)
+                else:
+                    diff_max = diff.new_zeros((0, ))
+                qlt_target[i][fg_mask] = 1 - diff_max
+            qlt_target[qlt_target < 0] = 0
         # print(qlt_preds.mean(), qlt_target.mean())
         # print(qlt_preds[:1, :10])
         loss = self.loss(qlt_preds, qlt_target)
@@ -83,19 +87,24 @@ class SQGARelaton(nn.Module):
         # info_debug(target_main)
         # info_debug(target_ref)
         # print(affs[0, :3, :3])
-        b, n, m = affs.shape
-        label_main = affs.new_zeros((b, n), dtype=torch.int64)
-        label_ref = affs.new_zeros((b, m), dtype=torch.int64)
-        fg_labels_main = [(l.max(dim=1)[1] + 1) if l.size(0) > 0
-                          else l.new_zeros((0, ), dtype=torch.int64) for l in target_main[1]]
-        fg_labels_ref = [(l.max(dim=1)[1] + 1) if l.size(0) > 0
-                         else l.new_zeros((0, ), dtype=torch.int64) for l in target_ref[1]]
-        label_main[target_main[0]] = torch.cat(fg_labels_main, dim=0)
-        label_ref[target_ref[0]] = torch.cat(fg_labels_ref, dim=0)
-        sim_target = affs.new_zeros(affs.shape)
-        for i in range(b):
-            sim_target[i] = label_main[i].reshape(-1, 1) == label_ref[i].reshape(1, -1)
+        with torch.no_grad():
+            b, n, m = affs.shape
+            label_main = affs.new_zeros((b, n), dtype=torch.int64)
+            label_ref = affs.new_zeros((b, m), dtype=torch.int64)
+            fg_labels_main = [(l.max(dim=1)[1]) if l.size(0) > 0
+                              else l.new_zeros((0, ), dtype=torch.int64) for l in target_main[1]]
+            fg_labels_ref = [(l.max(dim=1)[1]) if l.size(0) > 0
+                             else l.new_zeros((0, ), dtype=torch.int64) for l in target_ref[1]]
+            label_main[target_main[0]] = torch.cat(fg_labels_main, dim=0)
+            label_ref[target_ref[0]] = torch.cat(fg_labels_ref, dim=0)
+            sim_target = affs.new_zeros(affs.shape)
+            mask = affs.new_ones(affs.shape, dtype=torch.bool)
+            for i in range(b):
+                eqm = label_main[i].reshape(-1, 1) == label_ref[i].reshape(1, -1)
+                sim_target[i] = eqm
+                unknown = ((label_main[i].reshape(-1, 1) == 0) | (label_ref[i].reshape(1, -1) == 0)) & eqm
+                mask[i] = ~ unknown
         # print(affs.mean(), affs.numel(), sim_target.mean(), sim_target.numel())
         # print(affs[:1, :3])
-        loss = self.loss(affs, sim_target)
+        loss = self.loss(affs[mask], sim_target[mask])
         return loss

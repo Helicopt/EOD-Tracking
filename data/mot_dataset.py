@@ -81,10 +81,10 @@ class MultiFrameDataset(CustomDataset):
                         self.sequences[seq_name] = {}
                         self.id_mapping[seq_name] = {}
                     for instance in data.get('instances', []):
-                        track_id = instance['track_id']
-                        if track_id not in self.id_mapping[seq_name]:
+                        track_id = instance.get('track_id', -1)
+                        if track_id >= 0 and track_id not in self.id_mapping[seq_name]:
                             self.id_mapping[seq_name][track_id] = self.next_id
-                        instance['track_id'] = self.id_mapping[seq_name][track_id]
+                        instance['track_id'] = self.id_mapping[seq_name].get(track_id, 0)
                     self.sequences[seq_name][frame_id] = len(self.metas)
                     if self.label_mapping is not None:
                         data = self.set_label_mapping(data, self.label_mapping[idx], 0)

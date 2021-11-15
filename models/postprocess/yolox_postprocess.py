@@ -147,25 +147,30 @@ class YoloxwIDPostProcess(nn.Module):
             del mlvl_ori_loc_preds
         del mlvl_cls_pred, mlvl_loc_pred, mlvl_id_pred, mlvl_obj_pred
 
-        cls_targets, reg_targets, id_targets, obj_targets, ori_reg_targets, fg_masks, num_fgs = targets
+        cls_targets, reg_targets, id_targets, obj_targets, ori_reg_targets, fg_masks, num_fgs, valid_id_masks = targets
         cls_targets = torch.cat(cls_targets, 0)
         reg_targets = torch.cat(reg_targets, 0)
         id_targets = torch.cat(id_targets, 0)
         obj_targets = torch.cat(obj_targets, 0)
+        valid_id_masks = torch.cat(valid_id_masks, 0)
         if self.use_l1:
             ori_reg_targets = torch.cat(ori_reg_targets, 0)
         fg_masks = torch.cat(fg_masks, 0)
         if self.all_reduce_norm and dist.is_initialized():
             num_fgs = self.get_ave_normalizer(fg_masks)
+            num_ids = self.get_ave_normalizer(valid_id_masks)
         else:
             num_fgs = fg_masks.sum().item()
+            num_ids = valid_id_masks.sum().item()
         num_fgs = max(num_fgs, 1)
+        num_ids = max(num_ids, 1)
 
         cls_pred = cls_pred.reshape(-1, self.num_classes - 1)
         cls_loss = self.cls_loss(cls_pred[fg_masks], cls_targets, normalizer_override=num_fgs)
         # print(cls_pred[fg_masks].shape, cls_targets.shape)
         id_pred = id_pred.reshape(-1, self.num_ids)
-        id_loss = self.id_loss(id_pred[fg_masks], id_targets, normalizer_override=num_fgs)
+        id_loss = self.id_loss(id_pred[fg_masks][valid_id_masks],
+                               id_targets[valid_id_masks][:, 1:], normalizer_override=num_ids)
         # print(id_pred[fg_masks].shape, id_targets.shape)
         acc = self.get_acc(cls_pred[fg_masks], cls_targets)
         acc_id = self.get_acc(id_pred[fg_masks], id_targets)

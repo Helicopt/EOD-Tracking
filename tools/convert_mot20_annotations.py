@@ -75,7 +75,7 @@ def convert_annos(seqs, split, half=False, gap=30):
 if __name__ == '__main__':
     train_seqs = os.listdir(os.path.join(DATA_ROOT, 'train'))
     test_seqs = os.listdir(os.path.join(DATA_ROOT, 'test'))
-    if sys.argv[1] == 'test':
+    if len(sys.argv) > 1 and sys.argv[1] == 'test':
         convert_annos(test_seqs, 'test')
     else:
         convert_annos(train_seqs, 'train', half=True, gap=30)

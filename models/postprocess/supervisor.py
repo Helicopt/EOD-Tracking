@@ -44,6 +44,7 @@ class OTAwIDSupervisor(object):
         obj_targets = []
         ori_reg_targets = []
         fg_masks = []
+        valid_id_masks = []
 
         # process mlvl_preds: --> [B, A, 85]
         mlvl_preds = [torch.cat(preds, dim=-1) for preds in mlvl_preds]
@@ -82,7 +83,8 @@ class OTAwIDSupervisor(object):
                 cls_target = F.one_hot(
                     (gt_matched_classes - 1).to(torch.int64), self.num_classes
                 ) * pred_ious_this_matching.unsqueeze(-1)
-                id_target = F.one_hot((gt_matched_ids - 1).to(torch.int64), self.num_ids) * \
+                valid_id_mask = gt_matched_ids > 0
+                id_target = F.one_hot((gt_matched_ids).to(torch.int64), self.num_ids + 1) * \
                     pred_ious_this_matching.unsqueeze(-1)
                 reg_target = gts[matched_gt_inds, :4]
                 obj_target = fg_mask.unsqueeze(-1)
@@ -92,6 +94,7 @@ class OTAwIDSupervisor(object):
                 fg_mask = preds.new_zeros(preds.shape[0], dtype=torch.bool)
                 cls_target = preds.new_zeros((0, self.num_classes))
                 id_target = preds.new_zeros((0, self.num_ids), dtype=torch.int64)
+                valid_id_mask = preds.new_zeros((0,), dtype=torch.bool)
                 reg_target = preds.new_zeros((0, 4))
                 obj_target = preds.new_zeros((fg_mask.shape[0], 1)).to(torch.bool)
                 l1_target = preds.new_zeros((0, 4))
@@ -102,8 +105,9 @@ class OTAwIDSupervisor(object):
             obj_targets.append(obj_target)
             ori_reg_targets.append(l1_target)
             fg_masks.append(fg_mask)
+            valid_id_masks.append(valid_id_mask)
 
-        return cls_targets, reg_targets, id_targets, obj_targets, ori_reg_targets, fg_masks, num_fgs
+        return cls_targets, reg_targets, id_targets, obj_targets, ori_reg_targets, fg_masks, num_fgs, valid_id_masks
 
 
 @MATCHER_REGISTRY.register('ota_w_id')
