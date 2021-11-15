@@ -64,6 +64,15 @@ class MultiFrameDataset(CustomDataset):
             meta_file, image_reader, transformer, num_classes,
             evaluator=evaluator, label_mapping=label_mapping)
 
+    def parse_seq_info(self, filename, formatter):
+        if formatter == '{root}/{seq}/img1/{fr}.{ext}':
+            frame_id = int(os.path.splitext(os.path.basename(filename))[0])
+            seq_name = os.path.basename(os.path.dirname(os.path.dirname(filename)))
+        else:
+            seq_name = os.path.splitext(os.path.basename(filename))[0]
+            frame_id = 0
+        return seq_name, frame_id
+
     def _normal_init(self):
         self.sequences = {}
         self.id_mapping = {}
@@ -75,8 +84,7 @@ class MultiFrameDataset(CustomDataset):
                 for line in f:
                     data = json.loads(line)
                     filename = data['filename']
-                    frame_id = int(os.path.splitext(os.path.basename(filename))[0])
-                    seq_name = os.path.basename(os.path.dirname(os.path.dirname(filename)))
+                    seq_name, frame_id = self.parse_seq_info(filename, data['formatter'])
                     if seq_name not in self.sequences:
                         self.sequences[seq_name] = {}
                         self.id_mapping[seq_name] = {}
@@ -220,6 +228,7 @@ class MultiFrameDataset(CustomDataset):
             fr - frame_id) <= self.frame_involved and fr != frame_id]
         chosen = np.random.choice(options, min(len(options), self.num_expected), replace=False)
         if len(chosen) < self.num_expected:
+            options.append(frame_id)
             chosen2 = np.random.choice(options, self.num_expected - len(chosen))
             chosen = np.concatenate([chosen, chosen2])
         chosen = list(chosen)
