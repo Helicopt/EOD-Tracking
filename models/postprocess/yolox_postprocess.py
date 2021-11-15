@@ -173,7 +173,7 @@ class YoloxwIDPostProcess(nn.Module):
                                id_targets[valid_id_masks][:, 1:], normalizer_override=num_ids)
         # print(id_pred[fg_masks].shape, id_targets.shape)
         acc = self.get_acc(cls_pred[fg_masks], cls_targets)
-        acc_id = self.get_acc(id_pred[fg_masks], id_targets)
+        acc_id = self.get_acc(id_pred[fg_masks][valid_id_masks], id_targets[valid_id_masks][:, 1:])
 
         loc_target = reg_targets.reshape(-1, 4)
         loc_pred = loc_pred.reshape(-1, 4)
