@@ -302,10 +302,12 @@ class TrackingEvaluator(CustomEvaluator):
             self.pretty_print(metric_table)
 
             mDT91 = csv_metrics['DT91'][-1]
+            mTrackPrec = csv_metrics['TrackPrec'][-1]
 
             # metric_name = '{}_mAP:{}'.format(itype, self.iou_thresh)
             metric_name = 'mDT91'
-            # csv_metrics.update({metric_name: mAP})
+            csv_metrics.update({'mAP': mAP})
+            csv_metrics.update({'mTrackPrec': mTrackPrec})
             csv_metrics.update({metric_name: mDT91})
             metric_res.update(csv_metrics)
             metric_res.set_cmp_key(metric_name)
