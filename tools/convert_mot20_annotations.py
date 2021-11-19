@@ -3,7 +3,7 @@ import json
 import os
 import sys
 import configparser
-import cv2
+import PIL.Image as Image
 
 from senseTk.common import TrackSet, Det
 
@@ -25,8 +25,8 @@ def convert_annos(seqs, split, half=False, gap=30):
             ground_truth = TrackSet(gt_path)
         else:
             ground_truth = None
-        image_probe = cv2.imread(os.path.join(seq_dir, 'img1', '000001.jpg'))
-        image_height, image_width, _ = image_probe.shape
+        image_probe = Image.open(os.path.join(seq_dir, 'img1', '000001.jpg'))
+        image_height, image_width = image_probe.height, image_probe.width
         inifile = os.path.join(seq_dir, 'seqinfo.ini')
         iniconfig = configparser.ConfigParser()
         iniconfig.read(inifile)
@@ -36,7 +36,7 @@ def convert_annos(seqs, split, half=False, gap=30):
             img = os.path.join(seq_dir, 'img1', '%06d.jpg' % frame_id)
             instances = []
             if ground_truth:
-                gtdets: List[Det] = ground_truth[frame_id]
+                gtdets: List[Det] = sorted(ground_truth[frame_id], key=lambda x: x.uid)
                 for gtdet in gtdets:
                     if gtdet.status != 1:
                         continue
@@ -73,8 +73,8 @@ def convert_annos(seqs, split, half=False, gap=30):
 
 
 if __name__ == '__main__':
-    train_seqs = os.listdir(os.path.join(DATA_ROOT, 'train'))
-    test_seqs = os.listdir(os.path.join(DATA_ROOT, 'test'))
+    train_seqs = sorted(os.listdir(os.path.join(DATA_ROOT, 'train')))  # sorted to maintain the unique track ids
+    test_seqs = sorted(os.listdir(os.path.join(DATA_ROOT, 'test')))
     if len(sys.argv) > 1 and sys.argv[1] == 'test':
         convert_annos(test_seqs, 'test')
     else:
