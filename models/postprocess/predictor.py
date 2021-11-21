@@ -76,3 +76,50 @@ class YoloXwIDPredictor(object):
         bboxes = torch.cat(det_results, dim=0)
         id_embeds = torch.cat(id_feats_all, dim=0)
         return {'dt_bboxes': bboxes, 'id_embeds': id_embeds}
+
+    def lvl_nms(self, preds, preserved=800):
+        preds = (preds[0], preds[1], preds[3])
+        max_wh = 4096
+        preds = torch.cat(preds, dim=2)
+        x1 = preds[..., self.num_classes] - preds[..., self.num_classes + 2] / 2
+        y1 = preds[..., self.num_classes + 1] - preds[..., self.num_classes + 3] / 2
+        x2 = preds[..., self.num_classes] + preds[..., self.num_classes + 2] / 2
+        y2 = preds[..., self.num_classes + 1] + preds[..., self.num_classes + 3] / 2
+        preds[..., self.num_classes] = x1
+        preds[..., self.num_classes + 1] = y1
+        preds[..., self.num_classes + 2] = x2
+        preds[..., self.num_classes + 3] = y2
+
+        B = preds.shape[0]
+        det_results = []
+        for b_ix in range(B):
+            pred_per_img = preds[b_ix]
+            class_conf, class_pred = torch.max(pred_per_img[:, :self.num_classes], 1, keepdim=True)
+            conf_mask = (class_conf.squeeze() >= self.pre_nms_score_thresh).squeeze()
+            detections = torch.cat((pred_per_img[:, self.num_classes:-1], class_conf, class_pred.float()), 1)
+            detections = detections[conf_mask]
+            if not detections.size(0):
+                det_results.append(preds.new_zeros((0, ), dtype=torch.int64))
+                continue
+
+            # batch nms
+            cls_hash = detections[:, -1].unsqueeze(-1) * max_wh
+
+            boxes = detections[:, :4] + cls_hash
+            scores = detections[:, 4:5]  # .unsqueeze(-1)
+            res, keep = nms(torch.cat([boxes, scores], 1), self.nms_cfg)
+            det_results.append(keep)
+
+        inds = []
+        for b_ix in range(B):
+            ind = det_results[b_ix]
+            rest = min(preserved - len(ind), preds.size(1))
+            # print(ind.shape, rest)
+            if rest > 0:
+                ind = torch.cat([ind, torch.arange(rest).to(ind.device)])
+            if rest < 0:
+                ind = ind[:preserved]
+            inds.append(ind)
+        inds = torch.stack(inds)
+        return inds
+        # pred = torch.gather(preds, 1, inds)

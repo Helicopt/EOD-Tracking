@@ -2,9 +2,17 @@ from eod.utils.general.registry_factory import HOOK_REGISTRY
 from eod.utils.general.hook_helper import Hook
 from eod.utils.env.dist_helper import env
 from eod.utils.general.log_helper import default_logger as logger
+from eod.utils.general.hook_helper import get_summary_writer_class
+import os
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+import itertools
+from ..utils.debug import info_debug
 
 
-__all__ = ['MOTYoloxNoaug']
+__all__ = ['MOTYoloxNoaug', 'RelMapVis']
 
 
 @HOOK_REGISTRY.register('yolox_mot_noaug')
@@ -39,3 +47,189 @@ class MOTYoloxNoaug(Hook):
                 runner.test_freq = self.test_freq
                 runner.save_freq = self.save_freq
                 self.flag = True
+
+
+@HOOK_REGISTRY.register('relmap_vis')
+class RelMapVis(Hook):
+
+    def __init__(self, runner, logdir='log', summary_writer='tensorboard'):
+        super(RelMapVis, self).__init__(runner)
+        if env.is_master():
+            self.summary_writer = get_summary_writer_class(summary_writer)(os.path.join(runner.work_dir, logdir))
+        self._is_first = True
+
+    def need_vis(self, cur_iter):
+        runner = self.runner_ref()
+        epoch_size = runner.data_loaders['train'].get_epoch_size()
+        return cur_iter % epoch_size == 0 or self._is_first
+
+    def get_vis_pred(self, data):
+        objness = torch.cat([data[i][3][0]
+                            for i in range(len(data))], dim=0).sigmoid()
+        clspred = torch.cat([data[i][0][0]
+                            for i in range(len(data))], dim=0).sigmoid()
+        bboxes = torch.cat([data[i][1][0]
+                            for i in range(len(data))], dim=0)
+        idpred = torch.cat([data[i][2][0]
+                            for i in range(len(data))], dim=0).sigmoid()
+        lvl_idx = torch.cat([data[i][3][0].new_full((data[i][3][0].size(0), ), i, dtype=torch.int64)
+                            for i in range(len(data))], dim=0)
+        bboxes[:, 0] -= bboxes[:, 2] / 2.
+        bboxes[:, 1] -= bboxes[:, 3] / 2.
+        bboxes[:, 2] += bboxes[:, 0]
+        bboxes[:, 3] += bboxes[:, 1]
+        scores = (objness * clspred).flatten()
+        return objness, clspred, bboxes, idpred, scores, lvl_idx
+
+    def plot_affinity_matrix(self, aff, target, class_names_y, class_names_x):
+        """
+        Returns a matplotlib figure containing the plotted affinity matrix.
+
+        Args:
+            aff (array, shape = [n, n]): a affinity matrix of integer classes
+            class_names (array, shape = [n]): String names of the integer classes
+        """
+        figure = plt.figure(figsize=(28, 12))
+        plt.imshow(aff, interpolation='nearest', cmap=plt.cm.Blues)
+        plt.title("affinity matrix")
+        plt.colorbar()
+        tick_marks_y = np.arange(len(class_names_y))
+        tick_marks_x = np.arange(len(class_names_x))
+        plt.xticks(tick_marks_x, class_names_x, rotation=75)
+        plt.yticks(tick_marks_y, class_names_y)
+
+        # Compute the labels from the normalized affinity matrix.
+        # exp_aff = np.exp(aff.astype('float'))
+        # labels = np.around(aff / aff.sum(axis=1)[:, np.newaxis], decimals=2)
+        labels = np.around(aff, decimals=3)
+        target = target.astype('int')
+
+        # Use white text if squares are dark; otherwise black.
+        threshold = aff.max() / 2.
+        for i, j in itertools.product(range(aff.shape[0]), range(aff.shape[1])):
+            color = "white" if aff[i, j] > threshold else "black"
+            plt.text(j, i - 0.1, labels[i, j], horizontalalignment="center", color=color)
+            plt.text(j, i + 0.3, target[i, j], horizontalalignment="center", color=color)
+
+        plt.tight_layout()
+        plt.ylabel('Main')
+        plt.xlabel('Reference')
+        return figure
+
+    def before_forward(self, cur_iter, input):
+        if self.need_vis(cur_iter) and env.is_master():
+            input['vis_flag'] = True
+        else:
+            input['vis_flag'] = False
+
+    def after_forward(self, cur_iter, output):
+        if self.need_vis(cur_iter) and env.is_master():
+            self._is_first = False
+            # info_debug(output)
+            image = output['image'][0][[2, 1, 0]] / 255
+            # refines
+            obj_re, cls_re, bboxes_re, id_re, scores_re, lvl_idx_re = self.get_vis_pred(output['refined_pred_main'])
+            obj_ori, cls_ori, bboxes_ori, id_ori, scores_ori, _ = self.get_vis_pred(output['original_pred_main'])
+            num_to_show = 64
+            num_to_ref = 32
+            topscores, keep = torch.topk(scores_re, k=num_to_show)
+            # print(topscores.shape, keep.shape)
+            bboxes_re = bboxes_re[keep]
+            obj_re = obj_re[keep]
+            cls_re = cls_re[keep]
+            id_re = id_re[keep]
+            lvl_idx_re = lvl_idx_re[keep]
+            # original
+            obj_ori = obj_ori[keep]
+            bboxes_ori = bboxes_ori[keep]
+            cls_ori = cls_ori[keep]
+            id_ori = id_ori[keep]
+            # print(bboxes_re)
+            self.summary_writer.add_image_with_boxes(
+                'pred', image,
+                bboxes_re,
+                labels=list(map(str, map(int, keep))),
+                global_step=cur_iter,
+            )
+            text_string = ''
+            logs = []
+            fg_main = torch.cat(output['targets_main'][1], dim=1)[0]
+            id_main = torch.cat([l[1][0] for l in output['targets_main'][0]], dim=0)
+            fg_ind = fg_main.new_full((fg_main.size(0), ), -1, dtype=torch.int64)
+            fg_ind[fg_main] = torch.arange(id_main.size(0)).to(fg_ind.device)
+            ptr = 0
+            for ni, i in enumerate(keep):
+                i = int(i)
+                ori_cls = float(cls_ori[ni])
+                re_cls = float(cls_re[ni])
+                ori_obj = float(obj_ori[ni])
+                re_obj = float(obj_re[ni])
+                ori_id = int(id_ori[ni].argmax())
+                ori_id_score = float(id_ori[ni][ori_id])
+                re_id = int(id_re[ni].argmax())
+                re_id_score = float(id_re[ni][re_id])
+                one_log = '%d: cls(%.3f/%.3f), obj(%.3f/%.3f), id(%d:%.3f/%d:%.3f)' %\
+                    (i, ori_cls, re_cls, ori_obj, re_obj, ori_id + 1, ori_id_score, re_id + 1, re_id_score)
+                if fg_main[i]:
+                    one_log += ' | fg'
+                    assert fg_ind[i] >= 0
+                    id_ind = id_main[fg_ind[i]].argmax()
+                    one_log += '(%d)' % int(id_ind)
+                else:
+                    one_log += ' | bg'
+                text_string += one_log + '\n'
+                logs.append(one_log)
+            self.summary_writer.add_text('diff_log', text_string, global_step=cur_iter)
+            lvl_to_show = 0
+            x_logs = []
+            ptr = 0
+            for i, fg in enumerate(output['targets_ref'][1][lvl_to_show][0]):
+                if not fg:
+                    one_log = 'bg'
+                else:
+                    cls_label = float(output['targets_ref'][0][lvl_to_show][0][0][ptr])
+                    id_label = int(output['targets_ref'][0][lvl_to_show][1][0][ptr].argmax())
+                    id_label_score = float(output['targets_ref'][0][lvl_to_show][1][0][ptr].max())
+                    ptr += 1
+                    one_log = 'cls(%.3f), id(%d:%.3f)' % (cls_label, id_label, id_label_score)
+                x_logs.append(one_log)
+
+            for i in range(2):
+                heatmap = torch.cat([output['relation.%d.%d.sims' % (lvl, i)][0]
+                                     for lvl in range(len(output['refined_pred_main']))], dim=0)
+                heatmap_target = torch.cat([output['relation.%d.%d.sim_target' % (lvl, i)][0]
+                                            for lvl in range(len(output['refined_pred_main']))], dim=0)
+                relmap_tag = 'relation.%d.%d.sims' % (lvl_to_show, i)
+                heatmap = heatmap[keep].softmax(dim=1)
+                heatmap_target = heatmap_target[keep]
+                show_idx = lvl_idx_re == lvl_to_show
+                heatmap = heatmap[show_idx]
+                heatmap_target = heatmap_target[show_idx]
+                class_names_y = [x for xi, x in enumerate(logs) if show_idx[xi]]
+                if heatmap.size(0) > 16:
+                    heatmap = heatmap[:16]
+                    heatmap_target = heatmap_target[:16]
+                    class_names_y = class_names_y[:16]
+                if i == 0:
+                    _, ref_idx = heatmap.sum(dim=0).topk(num_to_ref)
+                else:
+                    mxs, _ = heatmap.max(dim=0)
+                    _, ref_idx = mxs.topk(num_to_ref)
+                ref_idx = ref_idx.flatten()
+                class_names_x = [x_logs[int(k)] for k in ref_idx]
+                heatmap = heatmap[:, ref_idx]
+                heatmap_target = heatmap_target[:, ref_idx]
+                heatmap = heatmap.detach().cpu().numpy()
+                heatmap_target = heatmap_target.detach().cpu().numpy()
+                fig = self.plot_affinity_matrix(heatmap, heatmap_target, class_names_y, class_names_x)
+                self.summary_writer.add_figure(relmap_tag, fig, global_step=cur_iter)
+            self.summary_writer.add_image_with_boxes(
+                'ori', image,
+                bboxes_ori,
+                labels=list(map(str, map(int, keep))),
+                global_step=cur_iter,
+            )
+            try:
+                self.summary_writer.flush()
+            except Exception as e:
+                pass

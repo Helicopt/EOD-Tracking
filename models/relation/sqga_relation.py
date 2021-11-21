@@ -30,6 +30,7 @@ class SQGARelaton(nn.Module):
         self.beta = beta
         self.np_ratio = np_ratio
         self.loss = build_loss(loss)
+        self.vis = True
 
     def forward(self, main_feats, ref_feats, target_main=None, target_ref=None, original_preds=None):
         b, m, c = ref_feats.shape
@@ -49,11 +50,17 @@ class SQGARelaton(nn.Module):
         refined_feats = self.norm(main_feats + self.dropout(attention))
         if self.training:
             qlt_loss = self.get_qlt_loss(qlt_main, original_preds, target_main)
-            affinities = affinities[:, :, :m]
-            sim_loss = self.get_sim_loss(affinities, target_main, target_ref)
-            return refined_feats, {'sim_loss': sim_loss, 'qlt_loss': qlt_loss}  # {'affinities': affinities}
+            sims = affinities[:, :, :m]
+            sim_loss, sim_target = self.get_sim_loss(sims, target_main, target_ref)
+            # {'affinities': affinities}
+            stuff = {'sim_loss': sim_loss, 'qlt_loss': qlt_loss}
+            if self.vis:
+                stuff.update({'sims': sims, 'sim_target': sim_target, 'qlt_main': qlt_main, 'qlt_ref': real_qlt_ref})
         else:
-            return refined_feats, {}
+            stuff = {}
+            if self.vis:
+                stuff.update({'sims': sims, 'sim_target': sim_target, 'qlt_main': qlt_main, 'qlt_ref': real_qlt_ref})
+        return refined_feats, stuff
 
     def get_qlt_loss(self, qlt_preds, ori_preds, target):
         # ori_preds_ = ori_preds
@@ -107,4 +114,4 @@ class SQGARelaton(nn.Module):
         # print(affs.mean(), affs.numel(), sim_target.mean(), sim_target.numel())
         # print(affs[:1, :3])
         loss = self.loss(affs[mask], sim_target[mask])
-        return loss
+        return loss, sim_target
