@@ -55,7 +55,8 @@ class RelMapVis(Hook):
     def __init__(self, runner, logdir='log', summary_writer='tensorboard'):
         super(RelMapVis, self).__init__(runner)
         if env.is_master():
-            self.summary_writer = get_summary_writer_class(summary_writer)(os.path.join(runner.work_dir, logdir))
+            self.summary_writer = get_summary_writer_class(summary_writer)(
+                os.path.join(runner.work_dir, logdir, 'vis'))
         self._is_first = True
 
     def need_vis(self, cur_iter):
