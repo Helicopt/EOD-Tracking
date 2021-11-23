@@ -23,6 +23,9 @@ class RelationYOLOX(nn.Module):
         self.inplanes = inplanes
         self.num_to_refine = num_to_refine
         self.num_as_ref = num_as_ref
+        self.size_factors = []
+        for i in range(len(self.inplanes)):
+            self.size_factors.insert(0, 1 << (i << 1))
         yolox_kwargs.update({'inplanes': self.inplanes})
         self.post_module = MODULE_ZOO_REGISTRY.build(dict(
             type='yolox_post_w_id',
@@ -105,11 +108,8 @@ class RelationYOLOX(nn.Module):
 
     @torch.no_grad()
     def get_fg_masks(self, fg_masks):
-        factor = 0
-        sizes = []
-        for i in range(len(self.inplanes)):
-            factor += 1 << (i << 1)
-            sizes.insert(0, 1 << (i << 1))
+        sizes = self.size_factors
+        factor = sum(sizes)
         prev = 0
         prev_num = [0 for mask in fg_masks]
         lvl_masks = []
@@ -132,26 +132,28 @@ class RelationYOLOX(nn.Module):
         return lvl_masks, target_range
 
     @torch.no_grad()
-    def get_selected_indices(self, fg_mask, target_range, mlvl_preds, mode='main'):
+    def get_selected_indices(self, fg_mask, target_range, mlvl_preds, lvl, mode='main'):
         # info_debug(mlvl_preds)
         if mode == 'main':
             # if fg_mask is not None:
             #     num = min(fg_mask.size(1), self.num_to_refine)  # must larger than fg_num
             # else:
             #     num = min(self.num_to_refine, objness.size(2) * objness.size(3))
-            num = self.num_to_refine
+            num = self.num_to_refine * self.size_factors[lvl]
+            num = min(num, 1200)
         else:
             # if fg_mask is not None:
             #     num = min(fg_mask.size(1), self.num_as_ref)
             # else:
             #     num = self.num_as_ref
-            num = self.num_as_ref
+            num = self.num_as_ref * self.size_factors[lvl]
+            num = min(num, 300)
         # if mode == 'main' and fg_mask is not None:
         #     fg_max = int(fg_mask.sum(dim=1).max())
         #     num = max(num, fg_max)
         keeps = self.post_module.predictor.lvl_nms(mlvl_preds, preserved=num)
 
-        # info_debug(keeps)
+        # info_debug(keeps, prefix='<%d>' % (self.num_to_refine))
         # new_masks = []
         # new_fg_masks = []
         # new_gt_inds = []
@@ -275,12 +277,13 @@ class RelationYOLOX(nn.Module):
             all_target_ref.append([])
             if self.training:
                 selected_main, selected_fg_masks, selected_gt_idx = self.get_selected_indices(
-                    fg_masks_main[lvl_idx], target_range_main[lvl_idx], mlvl_preds_activated[lvl_idx])
+                    fg_masks_main[lvl_idx], target_range_main[lvl_idx], mlvl_preds_activated[lvl_idx], lvl_idx)
                 selected_ref, selected_fg_masks_ref, selected_gt_idx_ref = map_transpose(
                     [self.get_selected_indices(
                         fg_masks_ref[i][lvl_idx],
                         target_range_ref[i][lvl_idx],
                         mlvl_preds_ref_activated[i][lvl_idx],
+                        lvl_idx,
                         mode='ref',
                     ) for i in range(m)])
                 # if lvl_idx == 0:
@@ -296,9 +299,9 @@ class RelationYOLOX(nn.Module):
             else:
                 with get_debugger().no_debug():
                     selected_main = self.get_selected_indices(
-                        None, None, mlvl_preds_activated[lvl_idx])
+                        None, None, mlvl_preds_activated[lvl_idx], lvl_idx)
                     selected_ref = [self.get_selected_indices(
-                        None, None, mlvl_preds_ref_activated[i][lvl_idx], mode='ref') for i in range(m)]
+                        None, None, mlvl_preds_ref_activated[i][lvl_idx], lvl_idx, mode='ref') for i in range(m)]
             for idx, roi_feat in enumerate(main_roi_feats):
                 relation_idx = self.relation_indices.get(idx, -1)
                 roi_feat = self.get_top_feats(roi_feat, selected_main)

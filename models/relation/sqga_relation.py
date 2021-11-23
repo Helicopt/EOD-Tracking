@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from eod.utils.general.registry_factory import MODULE_ZOO_REGISTRY
 from eod.models.losses import build_loss
 from .custom_mha import MultiheadAttention as CustomMHA
-from ...utils.debug import info_debug
+from ...utils.debug import info_debug, logger_print
 
 __all__ = ['SQGARelaton']
 
@@ -113,5 +113,7 @@ class SQGARelaton(nn.Module):
                 mask[i] = ~ unknown
         # print(affs.mean(), affs.numel(), sim_target.mean(), sim_target.numel())
         # print(affs[:1, :3])
-        loss = self.loss(affs[mask], sim_target[mask])
+        # logger_print(sim_target[mask].nonzero().numel() / max(sim_target[mask].numel(), 1),
+        #              sim_target[mask].numel(), sim_target.shape)
+        loss = self.loss(affs[mask], sim_target[mask], normalizer_override=max(sim_target[mask].sum(), 1))
         return loss, sim_target

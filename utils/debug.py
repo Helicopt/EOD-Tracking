@@ -75,3 +75,8 @@ def get_debugger(name='root', create_one=False, show_sts=True):
         else:
             raise KeyError(name)
     return debugger_pool[name]
+
+
+def logger_print(*args):
+    text = ' '.join(map(str, args))
+    logger.info(text)
