@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import math
+
 from eod.utils.general.registry_factory import MODULE_ZOO_REGISTRY
 from ...utils.debug import info_debug
 
@@ -56,4 +58,5 @@ class VanillaRelaton(nn.Module):
             main_feats.permute(1, 0, 2), ref_feats.permute(1, 0, 2), ref_feats.permute(1, 0, 2))
         attention = attention.permute(1, 0, 2)
         refined_feats = self.norm(main_feats + self.dropout(attention))
-        return refined_feats, {}  # {'affinities': affinities}
+        # {'affinities': affinities}
+        return refined_feats, {'sims': affinities.log() + math.log(affinities.size(2)), 'sim_target': affinities.new_full(affinities.shape, -1)}

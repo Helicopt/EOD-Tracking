@@ -27,6 +27,8 @@ class SQGARelaton(nn.Module):
             nn.LayerNorm(embed_dim),
             nn.Linear(embed_dim, 1),
         )
+        self.u = nn.Parameter(torch.FloatTensor(1))
+        self.u.data.fill_(-10)
         self.beta = beta
         self.np_ratio = np_ratio
         self.loss = build_loss(loss)
@@ -115,5 +117,5 @@ class SQGARelaton(nn.Module):
         # print(affs[:1, :3])
         # logger_print(sim_target[mask].nonzero().numel() / max(sim_target[mask].numel(), 1),
         #              sim_target[mask].numel(), sim_target.shape)
-        loss = self.loss(affs[mask], sim_target[mask], normalizer_override=max(sim_target[mask].sum(), 1))
+        loss = self.loss(affs[mask] + self.u, sim_target[mask], normalizer_override=max(sim_target[mask].sum(), 1))
         return loss, sim_target
