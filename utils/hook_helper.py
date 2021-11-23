@@ -61,25 +61,21 @@ class RelMapVis(Hook):
     def need_vis(self, cur_iter):
         runner = self.runner_ref()
         epoch_size = runner.data_loaders['train'].get_epoch_size()
+        # info_debug(torch.zeros((1,)), prefix='<%s %s>' % (cur_iter, self._is_first))
         return cur_iter % epoch_size == 0 or self._is_first
 
     def get_vis_pred(self, data):
-        objness = torch.cat([data[i][3][0]
-                            for i in range(len(data))], dim=0).sigmoid()
-        clspred = torch.cat([data[i][0][0]
-                            for i in range(len(data))], dim=0).sigmoid()
-        bboxes = torch.cat([data[i][1][0]
-                            for i in range(len(data))], dim=0)
-        idpred = torch.cat([data[i][2][0]
-                            for i in range(len(data))], dim=0).sigmoid()
-        lvl_idx = torch.cat([data[i][3][0].new_full((data[i][3][0].size(0), ), i, dtype=torch.int64)
-                            for i in range(len(data))], dim=0)
+        # info_debug(data, statistics=True)
+        objness = data[3][0].sigmoid()
+        clspred = data[0][0].sigmoid()
+        bboxes = data[1][0].clone()
+        idpred = data[2][0].sigmoid()
         bboxes[:, 0] -= bboxes[:, 2] / 2.
         bboxes[:, 1] -= bboxes[:, 3] / 2.
         bboxes[:, 2] += bboxes[:, 0]
         bboxes[:, 3] += bboxes[:, 1]
         scores = (objness * clspred).flatten()
-        return objness, clspred, bboxes, idpred, scores, lvl_idx
+        return objness, clspred, bboxes, idpred, scores
 
     def plot_affinity_matrix(self, aff, target, class_names_y, class_names_x):
         """
@@ -125,20 +121,22 @@ class RelMapVis(Hook):
     def after_forward(self, cur_iter, output):
         if self.need_vis(cur_iter) and env.is_master():
             self._is_first = False
+            lvl_to_show = 0
             # info_debug(output)
             image = output['image'][0][[2, 1, 0]] / 255
             # refines
-            obj_re, cls_re, bboxes_re, id_re, scores_re, lvl_idx_re = self.get_vis_pred(output['refined_pred_main'])
-            obj_ori, cls_ori, bboxes_ori, id_ori, scores_ori, _ = self.get_vis_pred(output['original_pred_main'])
+            obj_re, cls_re, bboxes_re, id_re, scores_re = self.get_vis_pred(output['refined_pred_main'][lvl_to_show])
+            obj_ori, cls_ori, bboxes_ori, id_ori, scores_ori = self.get_vis_pred(
+                output['original_pred_main'][lvl_to_show])
             num_to_show = 64
             num_to_ref = 32
             topscores, keep = torch.topk(scores_re, k=num_to_show)
+            # info_debug(keep)
             # print(topscores.shape, keep.shape)
             bboxes_re = bboxes_re[keep]
             obj_re = obj_re[keep]
             cls_re = cls_re[keep]
             id_re = id_re[keep]
-            lvl_idx_re = lvl_idx_re[keep]
             # original
             obj_ori = obj_ori[keep]
             bboxes_ori = bboxes_ori[keep]
@@ -180,7 +178,6 @@ class RelMapVis(Hook):
                 text_string += one_log + '\n'
                 logs.append(one_log)
             self.summary_writer.add_text('diff_log', text_string, global_step=cur_iter)
-            lvl_to_show = 0
             x_logs = []
             ptr = 0
             for i, fg in enumerate(output['targets_ref'][1][lvl_to_show][0]):
@@ -202,10 +199,7 @@ class RelMapVis(Hook):
                 relmap_tag = 'relation.%d.%d.sims' % (lvl_to_show, i)
                 heatmap = heatmap[keep].softmax(dim=1)
                 heatmap_target = heatmap_target[keep]
-                show_idx = lvl_idx_re == lvl_to_show
-                heatmap = heatmap[show_idx]
-                heatmap_target = heatmap_target[show_idx]
-                class_names_y = [x for xi, x in enumerate(logs) if show_idx[xi]]
+                class_names_y = [x for xi, x in enumerate(logs)]
                 if heatmap.size(0) > 16:
                     heatmap = heatmap[:16]
                     heatmap_target = heatmap_target[:16]
@@ -219,6 +213,7 @@ class RelMapVis(Hook):
                 class_names_x = [x_logs[int(k)] for k in ref_idx]
                 heatmap = heatmap[:, ref_idx]
                 heatmap_target = heatmap_target[:, ref_idx]
+                # info_debug([heatmap, heatmap_target])
                 heatmap = heatmap.detach().cpu().numpy()
                 heatmap_target = heatmap_target.detach().cpu().numpy()
                 fig = self.plot_affinity_matrix(heatmap, heatmap_target, class_names_y, class_names_x)
