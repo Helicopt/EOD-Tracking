@@ -2,7 +2,7 @@
 import torch
 from eod.models.heads.utils.nms_wrapper import nms
 from eod.utils.general.registry_factory import ROI_PREDICTOR_REGISTRY
-
+from ...utils.debug import info_debug, get_debugger
 
 __all__ = ['YoloXwIDPredictor']
 
@@ -36,10 +36,12 @@ class YoloXwIDPredictor(object):
         B = preds.shape[0]
         det_results = []
         id_feats_all = []
+        debugger = get_debugger()
         for b_ix in range(B):
             pred_per_img = preds[b_ix]
             class_conf, class_pred = torch.max(pred_per_img[:, :self.num_classes], 1, keepdim=True)
             id_feats_per_img = id_features[b_ix]
+            debugger(class_conf, 'conf')
             conf_mask = (class_conf.squeeze() >= self.pre_nms_score_thresh).squeeze()
             detections = torch.cat((pred_per_img[:, self.num_classes:-1], class_conf, class_pred.float()), 1)
             detections = detections[conf_mask]
@@ -53,6 +55,7 @@ class YoloXwIDPredictor(object):
             boxes = detections[:, :4] + cls_hash
             scores = detections[:, 4:5]  # .unsqueeze(-1)
             res, keep = nms(torch.cat([boxes, scores], 1), self.nms_cfg)
+            debugger(keep, 'predictor_keep')
 
             rois_keep = detections[keep]
             id_feats_keep = id_feats[keep]
@@ -80,6 +83,8 @@ class YoloXwIDPredictor(object):
     def lvl_nms(self, preds, preserved=800):
         preds = (preds[0], preds[1], preds[3])
         max_wh = 4096
+        debugger = get_debugger()
+        debugger(preds)
         preds = torch.cat(preds, dim=2)
         x1 = preds[..., self.num_classes] - preds[..., self.num_classes + 2] / 2
         y1 = preds[..., self.num_classes + 1] - preds[..., self.num_classes + 3] / 2
@@ -96,6 +101,7 @@ class YoloXwIDPredictor(object):
             pred_per_img = preds[b_ix]
             class_conf, class_pred = torch.max(pred_per_img[:, :self.num_classes], 1, keepdim=True)
             conf_mask = (class_conf.squeeze() >= self.pre_nms_score_thresh).squeeze()
+            conf_inds = conf_mask.nonzero().flatten()
             detections = torch.cat((pred_per_img[:, self.num_classes:-1], class_conf, class_pred.float()), 1)
             detections = detections[conf_mask]
             if not detections.size(0):
@@ -108,7 +114,8 @@ class YoloXwIDPredictor(object):
             boxes = detections[:, :4] + cls_hash
             scores = detections[:, 4:5]  # .unsqueeze(-1)
             res, keep = nms(torch.cat([boxes, scores], 1), self.nms_cfg)
-            det_results.append(keep)
+            debugger(keep, 'lvl_keep')
+            det_results.append(conf_inds[keep])
 
         inds = []
         for b_ix in range(B):

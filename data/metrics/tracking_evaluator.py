@@ -105,7 +105,7 @@ class TrackingEvaluator(CustomEvaluator):
         csv_metrics['AP'] = ap[1:].tolist()
         csv_metrics['Recall'] = max_recall[1:].tolist()
         csv_metrics['TrackPrec'] = tracking_prec[1:].tolist()
-        csv_metrics['DT91'] = (fppi_miss[1:, -1] * 0.9 + tracking_prec[1:] * 0.1).tolist()
+        csv_metrics['DT91'] = ((1 - fppi_miss[1:, -1]) * 0.9 + tracking_prec[1:] * 0.1).tolist()
         for idx, fppi in enumerate(self.fppi):
             csv_metrics['MR@FPPI={:.3f}'.format(fppi)] = fppi_miss[1:, idx].tolist()
         for idx, fppi in enumerate(self.fppi):
@@ -131,7 +131,7 @@ class TrackingEvaluator(CustomEvaluator):
         csv_metrics['AP'].append(mAP)
         csv_metrics['Recall'].append(m_rec)
         csv_metrics['TrackPrec'].append(m_track_prec)
-        csv_metrics['DT91'].append(np.mean(fppi_miss[1:, -1] * 0.9 + tracking_prec[1:] * 0.1, axis=0).tolist())
+        csv_metrics['DT91'].append(np.mean((1 - fppi_miss[1:, -1]) * 0.9 + tracking_prec[1:] * 0.1, axis=0).tolist())
         for fppi, mr, score, recall, precision, f1_score in zip(
                 self.fppi, m_fppi_miss, m_score_at_fppi, m_rec_at_fppi, m_prec_at_fppi, m_f1_score_at_fppi):
 

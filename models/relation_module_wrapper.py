@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import torch.distributed as dist
 from eod.utils.general.registry_factory import MODULE_ZOO_REGISTRY
 from eod.models.losses import build_loss
-from ..utils.debug import info_debug
+from ..utils.debug import info_debug, get_debugger
 from ..utils import map_transpose
 
 __all__ = ['RelationYOLOX']
@@ -167,6 +167,7 @@ class RelationYOLOX(nn.Module):
                 new_gt_inds.append(new_gt_inds_i)
             # info_debug([keeps, new_fg_mask, new_gt_inds])
             # info_debug([new_fg_mask.nonzero(), new_gt_inds])
+            # info_debug(new_gt_inds_i.unique(), prefix='<%d>' % (target_range[i][1] - target_range[i][0]))
             return keeps, new_fg_mask, new_gt_inds
 
             # for i in range(fg_mask.size(0)):
@@ -293,10 +294,11 @@ class RelationYOLOX(nn.Module):
                 all_fg_masks.append(selected_fg_masks)
                 mlvl_selected_gt.append(selected_gt_idx)
             else:
-                selected_main = self.get_selected_indices(
-                    None, None, mlvl_preds_activated[lvl_idx])
-                selected_ref = [self.get_selected_indices(
-                    None, None, mlvl_preds_ref_activated[i][lvl_idx], mode='ref') for i in range(m)]
+                with get_debugger().no_debug():
+                    selected_main = self.get_selected_indices(
+                        None, None, mlvl_preds_activated[lvl_idx])
+                    selected_ref = [self.get_selected_indices(
+                        None, None, mlvl_preds_ref_activated[i][lvl_idx], mode='ref') for i in range(m)]
             for idx, roi_feat in enumerate(main_roi_feats):
                 relation_idx = self.relation_indices.get(idx, -1)
                 roi_feat = self.get_top_feats(roi_feat, selected_main)
@@ -377,16 +379,19 @@ class RelationYOLOX(nn.Module):
         else:
             # print(mlvl_preds[0][1].shape, mlvl_preds[0][1][0, :10])
             # print(refined_mlvl_preds[0][1].shape, refined_mlvl_preds[0][1][0, :10])
+            # info_debug(mlvl_preds)
             rpn_results = self.get_results(
                 mlvl_preds,
                 data['main']['roi_features'],
             )
+            # info_debug(refined_mlvl_preds)
             refined_results = self.get_results(
                 refined_mlvl_preds,
                 all_refined_feats,
             )
             for k in rpn_results:
                 refined_results[k + '_rpn'] = rpn_results[k]
+                # refined_results[k] = rpn_results[k]
             if self.vis:
                 refined_results['refined_pred_main'] = refined_mlvl_preds
                 refined_results['original_pred_main'] = mlvl_preds
@@ -399,7 +404,8 @@ class RelationYOLOX(nn.Module):
     def get_results(self, mlvl_preds, mlvl_feats):
         id_feats = [mlvl_feats[lvl_idx][2] for lvl_idx in range(len(self.inplanes))]
         mlvl_preds = self.post_module.apply_activation(mlvl_preds)
-        results = self.post_module.predictor.predict(mlvl_preds, id_feats)
+        with get_debugger().no_debug():
+            results = self.post_module.predictor.predict(mlvl_preds, id_feats)
         return results
 
     def get_loss(self, target, fg_masks, mlvl_preds, gt_indices):
