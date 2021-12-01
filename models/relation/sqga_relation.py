@@ -73,17 +73,33 @@ class SQGARelaton(nn.Module):
             ori_preds = torch.sigmoid(ori_preds).float()
             qlt_target = ori_preds.max(dim=2)[0]
             b, n, c = ori_preds.shape
-            for i in range(b):
-                fg_mask = target[0][i].clone()
-                mask = target[1][i][:, 0] <= 0
-                fg_mask[fg_mask.clone()] = mask
-                diff = torch.abs(ori_preds[i][fg_mask] - target[1][i][mask][:, 1:])
-                # print(ori_preds_[i][target[0][i]][:50], target[1][i][:50])
-                if diff.size(0) > 0:
-                    diff_max, _ = diff.max(dim=1)
+            if target[0] is not None:
+                for i in range(b):
+                    fg_mask = target[0][i].clone()
+                    mask = target[1][i][:, 0] <= 0
+                    fg_mask[fg_mask.clone()] = mask
+                    if isinstance(target[1], list):
+                        diff = torch.abs(ori_preds[i][fg_mask] - target[1][i][mask][:, 1:])
+                        # print(ori_preds_[i][target[0][i]][:50], target[1][i][:50])
+                        if diff.size(0) > 0:
+                            diff_max, _ = diff.max(dim=1)
+                        else:
+                            diff_max = diff.new_zeros((0, ))
+                        qlt_target[i][fg_mask] = 1 - diff_max
+                    else:
+                        raise NotImplementedError()
+            else:
+                if target[1].dtype != torch.int64:
+                    diff = torch.abs(ori_preds - target[1][:, :, 1:])
+                    # print(ori_preds_[i][target[0][i]][:50], target[1][i][:50])
+                    diff_max, _ = diff.max(dim=2)
+                    qlt_target[i][fg_mask] = 1 - diff_max
                 else:
-                    diff_max = diff.new_zeros((0, ))
-                qlt_target[i][fg_mask] = 1 - diff_max
+                    mask = target[1] > 0
+                    pos_preds = ori_preds[mask]
+                    pos_targets = target[1][mask]
+                    pos_scores = torch.gather(pos_preds, 1, pos_targets.unsqueeze(-1) - 1).squeeze(-1)
+                    qlt_target[mask] = 1 - pos_scores
             qlt_target[qlt_target < 0] = 0
         # print(qlt_preds.mean(), qlt_target.mean())
         # print(qlt_preds[:1, :10])
@@ -100,12 +116,25 @@ class SQGARelaton(nn.Module):
             b, n, m = affs.shape
             label_main = affs.new_zeros((b, n), dtype=torch.int64)
             label_ref = affs.new_zeros((b, m), dtype=torch.int64)
-            fg_labels_main = [(l.max(dim=1)[1]) if l.size(0) > 0
-                              else l.new_zeros((0, ), dtype=torch.int64) for l in target_main[1]]
-            fg_labels_ref = [(l.max(dim=1)[1]) if l.size(0) > 0
-                             else l.new_zeros((0, ), dtype=torch.int64) for l in target_ref[1]]
-            label_main[target_main[0]] = torch.cat(fg_labels_main, dim=0)
-            label_ref[target_ref[0]] = torch.cat(fg_labels_ref, dim=0)
+            if isinstance(target_main[1], list):
+                if target_main[0] is not None:
+                    fg_labels_main = [(l.max(dim=1)[1]) if l.size(0) > 0
+                                      else l.new_zeros((0, ), dtype=torch.int64) for l in target_main[1]]
+                    fg_labels_ref = [(l.max(dim=1)[1]) if l.size(0) > 0
+                                     else l.new_zeros((0, ), dtype=torch.int64) for l in target_ref[1]]
+                    label_main[target_main[0]] = torch.cat(fg_labels_main, dim=0)
+                    label_ref[target_ref[0]] = torch.cat(fg_labels_ref, dim=0)
+                else:
+                    label_main = target_main[1].max(dim=2)[1]
+                    label_ref = target_ref[1].max(dim=2)[1]
+            else:
+                if target_main[0] is not None:
+                    raise NotImplementedError()
+                else:
+                    label_main = target_main[1].clone()
+                    label_ref = target_ref[1].clone()
+                    label_main[label_main < 0] = 0
+                    label_ref[label_ref < 0] = 0
             sim_target = affs.new_zeros(affs.shape)
             mask = affs.new_ones(affs.shape, dtype=torch.bool)
             for i in range(b):

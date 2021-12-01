@@ -47,8 +47,9 @@ class MultiFrameDataset(CustomDataset):
                  test_mode=False,
                  online=False,
                  evaluator=None,
-                 clip=True,
-                 label_mapping=None):
+                 label_mapping=None,
+                 cache=None,
+                 clip_box=True):
         self.id_cnt = 0
         self.num_ids = num_ids
         self.test_mode = test_mode
@@ -59,10 +60,9 @@ class MultiFrameDataset(CustomDataset):
         self.random_select = random_select
         self.repeat_num = repeat_to
         self.online = online
-        self.clip = clip
         super(MultiFrameDataset, self).__init__(
             meta_file, image_reader, transformer, num_classes,
-            evaluator=evaluator, label_mapping=label_mapping)
+            evaluator=evaluator, label_mapping=label_mapping, cache=cache, clip_box=clip_box)
 
     def parse_seq_info(self, filename, formatter):
         if formatter == '{root}/{seq}/img1/{fr}.{ext}':
@@ -170,7 +170,19 @@ class MultiFrameDataset(CustomDataset):
 
         gt_bboxes = torch.as_tensor(gt_bboxes, dtype=torch.float32)
         ig_bboxes = torch.as_tensor(ig_bboxes, dtype=torch.float32)
-        img = self.image_reader(filename, data.get('image_source', 0))
+        cache = False
+        try:
+            if self.cache is not None:
+                img = self.get_cache_image(data)
+                img = cv2.imdecode(img, cv2.IMREAD_COLOR)
+                if self.image_reader.color_mode != 'BGR':
+                    cvt_color = getattr(cv2, 'COLOR_BGR2{}'.format(self.image_reader.color_mode))
+                    img = cv2.cvtColor(img, cvt_color)
+                cache = True
+            else:
+                img = self.image_reader(filename, data.get('image_source', 0))
+        except:  # noqa
+            img = self.image_reader(filename, data.get('image_source', 0))
         input = EasyDict({
             'image': img,
             'gt_bboxes': gt_bboxes,
@@ -180,6 +192,7 @@ class MultiFrameDataset(CustomDataset):
             'image_id': img_id,
             'dataset_idx': idx,
             'neg_target': data.get('neg_target', 0),
+            'cache': cache,
         })
         return input
 
@@ -274,7 +287,7 @@ class MultiFrameDataset(CustomDataset):
             img_bboxes[:, [1, 3]] -= pad_w
             img_bboxes[:, [2, 4]] -= pad_h
             # clip
-            if self.clip:
+            if self.clip_box:
                 np.clip(img_bboxes[:, [1, 3]], 0, info[1], out=img_bboxes[:, [1, 3]])
                 np.clip(img_bboxes[:, [2, 4]], 0, info[0], out=img_bboxes[:, [2, 4]])
             img_bboxes[:, 1] /= scale_w

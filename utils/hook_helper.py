@@ -40,10 +40,13 @@ class MOTYoloxNoaug(Hook):
                 logger.info("rebuild dataloader")
                 runner.build_dataloaders()
                 runner.data_iterators['train'] = iter(runner.data_loaders["train"])
-                if env.world_size > 1:
-                    runner.model.module.relation_module.post_module.use_l1 = True
-                else:
-                    runner.model.relation_module.post_module.use_l1 = True
+                try:
+                    if env.world_size > 1:
+                        runner.model.module.relation_module.post_module.use_l1 = True
+                    else:
+                        runner.model.relation_module.post_module.use_l1 = True
+                except:  # noqa
+                    pass
                 runner.test_freq = self.test_freq
                 runner.save_freq = self.save_freq
                 self.flag = True
@@ -67,15 +70,18 @@ class RelMapVis(Hook):
 
     def get_vis_pred(self, data):
         # info_debug(data, statistics=True)
-        objness = data[3][0].sigmoid()
         clspred = data[0][0].sigmoid()
+        if len(data) > 3:
+            objness = data[3][0].sigmoid()
+            scores = (objness * clspred).flatten()
+        else:
+            objness = scores = clspred[:, 0]
         bboxes = data[1][0].clone()
         idpred = data[2][0].sigmoid()
         bboxes[:, 0] -= bboxes[:, 2] / 2.
         bboxes[:, 1] -= bboxes[:, 3] / 2.
         bboxes[:, 2] += bboxes[:, 0]
         bboxes[:, 3] += bboxes[:, 1]
-        scores = (objness * clspred).flatten()
         return objness, clspred, bboxes, idpred, scores
 
     def plot_affinity_matrix(self, aff, target, class_names_y, class_names_x):
@@ -123,6 +129,7 @@ class RelMapVis(Hook):
         if self.need_vis(cur_iter) and env.is_master():
             self._is_first = False
             image = output['image'][0][[2, 1, 0]] / 255
+            # info_debug(output)
             for lvl_to_show in range(len(output['refined_pred_main'])):
                 # info_debug(output)
                 # refines
@@ -153,10 +160,14 @@ class RelMapVis(Hook):
                 )
                 text_string = ''
                 logs = []
-                fg_main = output['targets_main'][1][lvl_to_show][0]
                 id_main = output['targets_main'][0][lvl_to_show][1][0]
-                fg_ind = fg_main.new_full((fg_main.size(0), ), -1, dtype=torch.int64)
-                fg_ind[fg_main] = torch.arange(id_main.size(0)).to(fg_ind.device)
+                if output['targets_main'][1] is None:
+                    fg_main = output['targets_main'][0][lvl_to_show][0][0] > 0
+                    fg_ind = torch.arange(id_main.size(0)).to(fg_main.device)
+                else:
+                    fg_main = output['targets_main'][1][lvl_to_show][0]
+                    fg_ind = fg_main.new_full((fg_main.size(0), ), -1, dtype=torch.int64)
+                    fg_ind[fg_main] = torch.arange(id_main.size(0)).to(fg_main.device)
                 ptr = 0
                 for ni, i in enumerate(keep):
                     i = int(i)
@@ -173,7 +184,10 @@ class RelMapVis(Hook):
                     if fg_main[i]:
                         one_log += ' | fg'
                         assert fg_ind[i] >= 0
-                        id_ind = id_main[fg_ind[i]].argmax()
+                        if id_main[fg_ind[i]].dtype == torch.int64:
+                            id_ind = id_main[fg_ind[i]]
+                        else:
+                            id_ind = id_main[fg_ind[i]].argmax()
                         one_log += '(%d)' % int(id_ind)
                     else:
                         one_log += ' | bg'
@@ -182,13 +196,21 @@ class RelMapVis(Hook):
                 self.summary_writer.add_text('diff_log', text_string, global_step=cur_iter)
                 x_logs = []
                 ptr = 0
-                for i, fg in enumerate(output['targets_ref'][1][lvl_to_show][0]):
+                if output['targets_ref'][1] is None:
+                    fgs = output['targets_ref'][0][lvl_to_show][0][0] > 0
+                else:
+                    fgs = output['targets_ref'][1][lvl_to_show][0]
+                for i, fg in enumerate(fgs):
                     if not fg:
                         one_log = 'bg'
                     else:
                         cls_label = float(output['targets_ref'][0][lvl_to_show][0][0][ptr])
-                        id_label = int(output['targets_ref'][0][lvl_to_show][1][0][ptr].argmax())
-                        id_label_score = float(output['targets_ref'][0][lvl_to_show][1][0][ptr].max())
+                        if isinstance(output['targets_ref'][0][lvl_to_show][1], torch.Tensor):
+                            id_label = int(output['targets_ref'][0][lvl_to_show][1][0][ptr])
+                            id_label_score = 1.
+                        else:
+                            id_label = int(output['targets_ref'][0][lvl_to_show][1][0][ptr].argmax())
+                            id_label_score = float(output['targets_ref'][0][lvl_to_show][1][0][ptr].max())
                         ptr += 1
                         one_log = 'cls(%.3f), id(%d:%.3f)' % (cls_label, id_label, id_label_score)
                     x_logs.append(one_log)

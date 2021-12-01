@@ -4,8 +4,8 @@ import torch
 import yaml
 
 
-model_to_convert = './pretrained/yolox_large_adamw.pth'
-config_path = './configs/tracking/base_large.yaml'
+model_to_convert = './pretrained/yolox_x_retina_sgd.pth'
+config_path = './configs/tracking/base_retina_x_m20_noaug.yaml'
 
 
 def _rename_keys(state, modules):
