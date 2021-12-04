@@ -10,6 +10,7 @@ from collections import OrderedDict
 from eod.utils.general.registry_factory import MODEL_HELPER_REGISTRY
 from eod.utils.env.gene_env import to_device, patterns_match
 from eod.models.model_helper import ModelHelper
+from eod.utils.env.dist_helper import env
 
 __all__ = ['MOTModelHelper']
 
@@ -33,7 +34,11 @@ class MOTModelHelper(ModelHelper):
             if 'main' in output and 'ref' in output:
                 input['main'].update(output['main'])
                 for u, v in zip(input['ref'], output['ref']):
+                    kept_keys = ['strides', 'gt_bboxes', 'image_info']
+                    kept_dict = {k: u[k] for k in kept_keys if k in u}
+                    u.clear()
                     u.update(v)
+                    u.update(kept_dict)
                 del output['main']
                 del output['ref']
             else:

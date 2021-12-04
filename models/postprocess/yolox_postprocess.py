@@ -82,7 +82,6 @@ class YoloxwIDPostProcess(nn.Module):
         return mlvl_permuted_preds, mlvl_shapes
 
     def prepare_preds(self, input):
-        features = input['features']
         strides = input['strides']
         mlvl_preds = input['preds']
 
@@ -91,7 +90,7 @@ class YoloxwIDPostProcess(nn.Module):
         mlvl_shapes = [(*shp, s) for shp, s in zip(mlvl_shapes, strides)]
 
         # [hi*wi*A, 2], for C4 there is only one layer, for FPN generate anchors for each layer
-        mlvl_locations = self.point_generator.get_anchors(mlvl_shapes, device=features[0].device)
+        mlvl_locations = self.point_generator.get_anchors(mlvl_shapes, device=mlvl_preds[0][0].device)
 
         mlvl_ori_loc_preds = None
         if self.use_l1:

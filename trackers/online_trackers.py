@@ -1,6 +1,7 @@
 from eod.utils.general.registry_factory import MODULE_ZOO_REGISTRY
 from .no_tracking import NoTracking
 from eod.utils.general.log_helper import default_logger as logger
+from eod.utils.env.dist_helper import env
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -44,6 +45,8 @@ class MotionAppearanceOnlineTracker(NoTracking):
     @property
     def next_id(self):
         self.id_cnt += 1
+        if env.distributed:
+            return self.id_cnt * env.world_size + env.rank
         return self.id_cnt
 
     def get_gt(self, image_id):
@@ -177,13 +180,23 @@ class PureAppearanceTracker(NoTracking):
     def initialize(self, state):
         super().initialize(state)
         state.tracklets = []
+        # state.cache_items = []
         self.fr = 0
         if self.reset_id:
             self.id_cnt = 0
 
+    # def finalize(self, state):
+    #     tag = 'train'
+    #     torch.save(state.cache_items, '/home/toka/code/EOD/ptss/tracker.%s.%d.%s.%d.pkl' %
+    #                (tag, env.rank, self.seq_name, self.id_cnt))
+    #     del state.cache_items
+    #     return NotImplemented
+
     @property
     def next_id(self):
         self.id_cnt += 1
+        if env.distributed:
+            return self.id_cnt * env.world_size + env.rank
         return self.id_cnt
 
     def get_gt(self, image_id):
@@ -193,9 +206,9 @@ class PureAppearanceTracker(NoTracking):
         seq_dir = os.path.dirname(os.path.dirname(image_id))
         gt_file = os.path.join(seq_dir, 'gt', 'gt.txt')
         seq = os.path.basename(seq_dir)
+        self.seq_name = seq
         if self.use_gt and os.path.exists(gt_file):
             if not hasattr(self, 'seq_name') or self.seq_name != seq:
-                self.seq_name = seq
                 self.gt = TrackSet(gt_file)
             return seq, self.gt[frame_id]
         else:
@@ -224,6 +237,7 @@ class PureAppearanceTracker(NoTracking):
     def forward(self, state, inputs):
         self.fr += 1
         bboxes, real_bboxes, embeds = self.preprocess(inputs['dt_bboxes'], inputs['id_embeds'], inputs['image_info'])
+        # state.cache_items.append((real_bboxes, embeds))
         seq, gt = self.get_gt(inputs['image_id'])
         self.device = bboxes.device
         keep = bboxes[:, 4] > self.output_thr.setdefault(seq, self.output_thr['default'])

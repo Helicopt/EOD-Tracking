@@ -7,6 +7,7 @@ import torch.distributed as dist
 from eod.utils.general.registry_factory import MODULE_ZOO_REGISTRY
 from eod.models.losses import build_loss
 from ..utils.debug import info_debug, get_debugger, logger_print
+from eod.utils.env.dist_helper import env
 from ..utils import map_transpose
 
 __all__ = ['RelationYOLOX', 'RelationRetina']
@@ -371,6 +372,11 @@ class RelationYOLOX(nn.Module):
         #     }
         # )
         refined_mlvl_preds = all_refined_preds
+        if self.training:
+            del targets_ref
+            del target_ref_splits
+        del mlvl_preds_ref
+        del mlvl_preds_ref_activated
         if self.training:
             losses_rpn = self.post_module.get_loss(target_main, mlvl_preds, mlvl_ori_loc_preds)
             losses_refined = self.get_loss(target_main, all_fg_masks, refined_mlvl_preds, mlvl_selected_gt)
