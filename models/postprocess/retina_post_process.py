@@ -3,14 +3,14 @@ import copy
 import torch
 import torch.nn as nn
 from eod.utils.general.registry_factory import MODULE_ZOO_REGISTRY
-from eod.models.heads.utils import accuracy as A  # noqa F401
-from eod.models.heads.utils.anchor_generator import build_anchor_generator
+from eod.utils.model import accuracy as A  # noqa F401
+from eod.tasks.det.models.utils.anchor_generator import build_anchor_generator
 from eod.models.losses import build_loss
-from eod.models.losses.entropy_loss import apply_class_activation
-from eod.models.heads.utils.bbox_helper import offset2bbox, bbox_iou_overlaps
+from eod.tasks.det.models.losses.entropy_loss import apply_class_activation
+from eod.tasks.det.models.utils.bbox_helper import offset2bbox, bbox_iou_overlaps
 from eod.utils.env.dist_helper import allreduce, env
-from eod.models.postprocess.supervisor import build_roi_supervisor
-from eod.models.postprocess.predictor import build_roi_predictor
+from eod.tasks.det.models.postprocess.roi_supervisor import build_roi_supervisor
+from eod.tasks.det.models.postprocess.roi_predictor import build_roi_predictor
 from ...utils.debug import info_debug
 
 

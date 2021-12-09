@@ -3,15 +3,15 @@ import torch
 import torch.nn as nn
 import math
 
-from eod.models.heads.utils import accuracy as A  # noqa F401
-from eod.models.utils.initializer import initialize_from_cfg
+from eod.utils.model import accuracy as A  # noqa F401
+from eod.utils.model.initializer import initialize_from_cfg
 from eod.utils.general.registry_factory import MODULE_ZOO_REGISTRY
 
-from eod.plugins.yolox.models.backbone.cspdarknet import DWConv
+from eod.tasks.det.plugins.yolox.models.backbone.cspdarknet import DWConv
 
-from eod.plugins.yolov5.models.components import ConvBnAct
-from eod.models.utils.normalize import build_norm_layer
-from eod.models.utils.act_fn import build_act_fn
+from eod.tasks.det.plugins.yolov5.models.components import ConvBnAct
+from eod.utils.model.normalize import build_norm_layer
+from eod.utils.model.act_fn import build_act_fn
 
 
 __all__ = ['YoloXHeadwID', 'YoloXHeadwIDShare']

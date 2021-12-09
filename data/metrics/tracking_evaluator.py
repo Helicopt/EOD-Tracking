@@ -12,7 +12,7 @@ from prettytable import PrettyTable
 from eod.utils.general.log_helper import default_logger as logger
 from eod.utils.general.yaml_loader import IncludeLoader
 from eod.utils.general.registry_factory import EVALUATOR_REGISTRY
-from eod.data.metrics.custom_evaluator import CustomEvaluator, Metric
+from eod.tasks.det.data.metrics.custom_evaluator import CustomEvaluator, Metric
 
 
 __all__ = ['TrackingEvaluator']

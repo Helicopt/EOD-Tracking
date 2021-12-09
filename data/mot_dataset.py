@@ -14,7 +14,7 @@ from easydict import EasyDict
 
 from eod.utils.general.log_helper import default_logger as logger
 from eod.utils.general.registry_factory import DATASET_REGISTRY
-from eod.data.datasets.custom_dataset import CustomDataset
+from eod.tasks.det.data.datasets.custom_dataset import CustomDataset
 
 from eod.data.data_utils import get_image_size
 

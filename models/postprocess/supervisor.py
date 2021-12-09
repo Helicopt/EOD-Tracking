@@ -1,17 +1,16 @@
 # Import from third library
 import torch
 import torch.nn.functional as F
-from eod.models.heads.utils.matcher import build_matcher
+from eod.tasks.det.models.utils.matcher import build_matcher
 from eod.utils.general.registry_factory import MATCHER_REGISTRY, ROI_SUPERVISOR_REGISTRY
-from eod.models.heads.utils.bbox_helper import bbox_iou_overlaps
 from eod.utils.general.log_helper import default_logger as logger
-from eod.models.heads.utils.bbox_helper import (
+from eod.tasks.det.models.utils.bbox_helper import (
     bbox2offset,
     bbox_iou_overlaps,
     filter_by_size,
     offset2bbox
 )
-from eod.models.heads.utils.box_sampler import build_roi_sampler
+from eod.tasks.det.models.utils.box_sampler import build_roi_sampler
 from eod.utils.general.fp16_helper import to_float32
 
 

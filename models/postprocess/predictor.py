@@ -1,13 +1,13 @@
 # Import from third library
 import torch
-from eod.models.heads.utils.nms_wrapper import nms
-from eod.models.heads.utils.bbox_helper import (
+from eod.tasks.det.models.utils.nms_wrapper import nms
+from eod.tasks.det.models.utils.bbox_helper import (
     clip_bbox,
     filter_by_size,
     offset2bbox
 )
 from eod.utils.general.registry_factory import ROI_MERGER_REGISTRY, ROI_PREDICTOR_REGISTRY
-from eod.models.postprocess.predictor import build_merger
+from eod.tasks.det.models.postprocess.roi_predictor import build_merger
 from eod.utils.general.fp16_helper import to_float32
 from ...utils.debug import info_debug, get_debugger
 

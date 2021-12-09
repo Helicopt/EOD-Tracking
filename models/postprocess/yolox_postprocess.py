@@ -3,14 +3,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
-from eod.models.heads.utils import accuracy as A  # noqa F401
-from eod.models.heads.utils.anchor_generator import build_anchor_generator
+from eod.utils.model import accuracy as A  # noqa F401
+from eod.tasks.det.models.utils.anchor_generator import build_anchor_generator
 from eod.models.losses import build_loss
 from eod.utils.general.registry_factory import MODULE_ZOO_REGISTRY
 
 from eod.utils.env.dist_helper import allreduce, env
-from eod.models.postprocess.supervisor import build_roi_supervisor
-from eod.models.postprocess.predictor import build_roi_predictor
+from eod.tasks.det.models.postprocess.roi_supervisor import build_roi_supervisor
+from eod.tasks.det.models.postprocess.roi_predictor import build_roi_predictor
 
 
 __all__ = ['YoloxwIDPostProcess']

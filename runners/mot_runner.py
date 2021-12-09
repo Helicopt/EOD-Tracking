@@ -6,14 +6,14 @@ from eod.utils.general.log_helper import default_logger as logger
 from eod.utils.general.registry_factory import MODEL_HELPER_REGISTRY, MODULE_ZOO_REGISTRY
 from eod.utils.env.dist_helper import barrier, all_gather, env
 
-from eod.runner.fp16_runner import FP16Runner
+from eod.runner.base_runner import BaseRunner
 
 
 __all__ = ['MOTFP16Runner']
 
 
 @RUNNER_REGISTRY.register('motfp16')
-class MOTFP16Runner(FP16Runner):
+class MOTFP16Runner(BaseRunner):
 
     def batch2device(self, batch):
         if batch['main']['image'].device != torch.device('cuda') or \
