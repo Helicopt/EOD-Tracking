@@ -71,12 +71,12 @@ class SQGARelaton(nn.Module):
         # info_debug(target)
         with torch.no_grad():
             ori_preds = torch.sigmoid(ori_preds).float()
-            qlt_target = ori_preds.max(dim=2)[0]
+            qlt_target = 1 - ori_preds.max(dim=2)[0]
             b, n, c = ori_preds.shape
             if target[0] is not None:
                 for i in range(b):
                     fg_mask = target[0][i].clone()
-                    mask = target[1][i][:, 0] <= 0
+                    mask = target[1][i][:, 0] <= 1e-12
                     fg_mask[fg_mask.clone()] = mask
                     if isinstance(target[1], list):
                         diff = torch.abs(ori_preds[i][fg_mask] - target[1][i][mask][:, 1:])
