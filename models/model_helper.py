@@ -18,6 +18,10 @@ __all__ = ['MOTModelHelper']
 @MODEL_HELPER_REGISTRY.register('mot')
 class MOTModelHelper(ModelHelper):
 
+    def __init__(self, cfg, nonref=False, **kwargs):
+        super().__init__(cfg, **kwargs)
+        self.nonref = nonref
+
     def forward(self, input):
         """
         Note:
@@ -30,6 +34,12 @@ class MOTModelHelper(ModelHelper):
             if input['main']['image'].device != self.device or input['main']['image'].dtype != self.dtype:
                 input = to_device(input, device=self.device, dtype=self.dtype)
         for submodule in self.children():
+            if self.nonref:
+                if 'main' in input and 'ref' in input:
+                    main = input['main']
+                    del input['main']
+                    del input['ref']
+                    input.update(main)
             output = submodule(input)
             if 'main' in output and 'ref' in output:
                 input['main'].update(output['main'])
