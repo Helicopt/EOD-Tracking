@@ -16,9 +16,12 @@ __all__ = ['MOTFP16Runner']
 class MOTFP16Runner(BaseRunner):
 
     def batch2device(self, batch):
+        model_dtype = torch.float32
+        if self.fp16 and self.backend == 'linklink':
+            model_dtype = self.model.dtype
         if batch['main']['image'].device != torch.device('cuda') or \
-                batch['main']['image'].dtype != torch.float32:
-            batch = to_device(batch, device=torch.device('cuda'), dtype=torch.float32)
+                batch['main']['image'].dtype != model_dtype:
+            batch = to_device(batch, device=torch.device('cuda'), dtype=model_dtype)
         return batch
 
     def build_fake_model(self):
@@ -46,13 +49,15 @@ class MOTFP16Runner(BaseRunner):
             model_helper_ins = MODEL_HELPER_REGISTRY[model_helper_type]
 
             model = model_helper_ins(net_cfg, **model_helper_kwargs)
+            if self.device == 'cuda':
+                model = model.cuda()
+            if self.fp16 and self.backend == 'linklink':
+                model = model.half()
             if self.config['runtime']['special_bn_init']:
                 for m in model.modules():
                     if isinstance(m, torch.nn.BatchNorm2d) or isinstance(m, torch.nn.SyncBatchNorm):
                         m.eps = 1e-3
                         m.momentum = 0.03
-            if self.device == 'cuda':
-                model = model.cuda()
             model.load(self.model.state_dict())
         else:
             model = self.model
