@@ -15,6 +15,7 @@ from easydict import EasyDict
 from eod.utils.general.log_helper import default_logger as logger
 from eod.utils.general.registry_factory import DATASET_REGISTRY
 from eod.tasks.det.data.datasets.custom_dataset import CustomDataset
+from eod.data.datasets.transforms import build_transformer
 
 from eod.data.data_utils import get_image_size
 
@@ -38,6 +39,8 @@ class MultiFrameDataset(CustomDataset):
                  image_reader,
                  transformer,
                  num_classes,
+                 noaug_ratio=0,
+                 transformer_noaug=None,
                  num_ids=None,
                  num_expected=6,
                  frame_involved=12,
@@ -63,6 +66,14 @@ class MultiFrameDataset(CustomDataset):
         super(MultiFrameDataset, self).__init__(
             meta_file, image_reader, transformer, num_classes,
             evaluator=evaluator, label_mapping=label_mapping, cache=cache, clip_box=clip_box)
+        if transformer_noaug is not None:
+            for trans in transformer_noaug:
+                if 'kwargs' in trans and trans['kwargs'].get('extra_input', False):
+                    trans['kwargs']['dataset'] = self
+            self.transformer_noaug = build_transformer(transformer_noaug)
+        else:
+            self.transformer_noaug = lambda x: x
+        self.noaug_ratio = noaug_ratio
 
     def parse_seq_info(self, filename, formatter):
         if formatter == '{root}/{seq}/img1/{fr}.{ext}':
@@ -196,9 +207,15 @@ class MultiFrameDataset(CustomDataset):
         })
         return input
 
-    def prepare_input(self, input):
+    def prepare_input(self, input, noaug_flag=False):
         image_h, image_w = get_image_size(input.image)
-        input = self.transformer(input)
+
+        if noaug_flag:
+            transform = self.transformer_noaug
+        else:
+            transform = self.transformer
+
+        input = transform(input)
         scale_factor = input.get('scale_factor', 1)
 
         new_image_h, new_image_w = get_image_size(input.image)
@@ -239,6 +256,10 @@ class MultiFrameDataset(CustomDataset):
         seq_name, frame_id = self.seq_metas[idx]
         options = [fr for fr in self.sequences[seq_name] if abs(
             fr - frame_id) <= self.frame_involved and fr != frame_id]
+        if not self.random_select:
+            old_state = np.random.get_state()
+            new_state = np.random.MT19937(0).state
+            np.random.set_state(new_state)
         chosen = np.random.choice(options, min(len(options), self.num_expected), replace=False)
         if len(chosen) < self.num_expected:
             options.append(frame_id)
@@ -247,16 +268,26 @@ class MultiFrameDataset(CustomDataset):
         chosen = list(chosen)
         # print(seq_name, frame_id, chosen)
 
+        if self.noaug_ratio < 1e-12:
+            noaug_flag = False
+        elif self.noaug_ratio > 1 - 1e-12:
+            noaug_flag = True
+        else:
+            noaug_flag = np.random.rand() < self.noaug_ratio
+
         input_main = self.get_input_by_seq_frame(seq_name, frame_id, idx)
-        input_main = self.prepare_input(input_main)
+        input_main = self.prepare_input(input_main, noaug_flag=noaug_flag)
         input_ref = [self.get_input_by_seq_frame(seq_name, fr, idx) for fr in chosen]
-        input_ref = [self.prepare_input(o) for o in input_ref]
+        input_ref = [self.prepare_input(o, noaug_flag=noaug_flag) for o in input_ref]
         if self.add_self:
             input_ref.append(input_main)
+        if not self.random_select:
+            np.random.set_state(old_state)
         return {
             'main': input_main, 'ref': input_ref,
             'begin_flag': frame_id == self.seq_controls[seq_name]['begin'],
             'end_flag': frame_id == self.seq_controls[seq_name]['end'],
+            'noaug_flag': noaug_flag,
         }
 
     @property

@@ -55,7 +55,8 @@ class MOTDataLoader(BaseDataLoader):
         ref = [self._process([one['ref'][i] for one in batch]) for i in range(self.dataset.ref_num)]
         begin_flags = [one['begin_flag'] for one in batch]
         end_flags = [one['end_flag'] for one in batch]
-        return {'main': main, 'ref': ref, 'begin_flag': begin_flags, 'end_flag': end_flags}
+        noaug_flags = [one['noaug_flag'] for one in batch]
+        return {'main': main, 'ref': ref, 'begin_flag': begin_flags, 'end_flag': end_flags, 'noaug_flag': noaug_flags}
 
     def _process(self, batch):
         images = [_['image'] for _ in batch]
