@@ -31,7 +31,8 @@ class MOTYoloxNoaug(Hook):
         if cur_iter >= runner.data_loaders['train'].get_epoch_size() * (self.max_epoch - self.no_aug_epoch):
             if not self.flag:
                 logger.info(f"rebuild dataset transformer cfg {self.transformer}")
-                runner.config['dataset']['train']['dataset']['kwargs']['transformer'] = self.transformer
+                runner.config['dataset']['train']['dataset']['kwargs']['transformer_noaug'] = self.transformer
+                runner.config['dataset']['train']['dataset']['kwargs']['noaug_ratio'] = 1
                 del runner.data_loaders, runner.data_iterators['train']
                 import gc
                 gc.collect()

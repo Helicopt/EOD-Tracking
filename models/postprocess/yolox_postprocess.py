@@ -23,6 +23,7 @@ class YoloxwIDPostProcess(nn.Module):
                  num_ids,
                  inplanes,
                  cfg,
+                 dismiss_aug=False,
                  norm_on_bbox=False,
                  all_reduce_norm=True,
                  use_l1=False):
@@ -47,6 +48,7 @@ class YoloxwIDPostProcess(nn.Module):
         self.id_loss = build_loss(cfg['id_loss'])
         self.l1_loss = nn.L1Loss(reduction="none")
         self.use_l1 = use_l1
+        self.dismiss_aug = dismiss_aug
 
         # config
         self.cfg = copy.deepcopy(cfg)
@@ -111,15 +113,16 @@ class YoloxwIDPostProcess(nn.Module):
     def forward(self, input):
         if 'main' in input and 'ref' in input:
             input = input['main']
+        noaug_flag = input['noaug_flag']
 
         mlvl_preds, mlvl_locations, mlvl_ori_loc_preds = self.prepare_preds(input)
 
         if self.training:
             targets = self.supervisor.get_targets(mlvl_locations, input, mlvl_preds)
             if not self.use_l1:
-                losses = self.get_loss(targets, mlvl_preds)
+                losses = self.get_loss(targets, mlvl_preds, noaug_flag=noaug_flag)
             else:
-                losses = self.get_loss(targets, mlvl_preds, mlvl_ori_loc_preds)
+                losses = self.get_loss(targets, mlvl_preds, mlvl_ori_loc_preds, noag_flag=noaug_flag)
             return losses
         else:
             id_feats = [lvl_feats[2] for lvl_feats in input['roi_features']]
@@ -135,7 +138,7 @@ class YoloxwIDPostProcess(nn.Module):
         acc = A.accuracy_v2(cls_pred, cls_targets_acc, activation_type='qfl')
         return acc
 
-    def get_loss(self, targets, mlvl_preds, mlvl_ori_loc_preds=None):
+    def get_loss(self, targets, mlvl_preds, mlvl_ori_loc_preds=None, noaug_flag=None):
         mlvl_cls_pred, mlvl_loc_pred, mlvl_id_pred, mlvl_obj_pred = zip(*mlvl_preds)
         cls_pred = torch.cat(mlvl_cls_pred, dim=1)
         loc_pred = torch.cat(mlvl_loc_pred, dim=1)
@@ -151,6 +154,8 @@ class YoloxwIDPostProcess(nn.Module):
         reg_targets = torch.cat(reg_targets, 0)
         id_targets = torch.cat(id_targets, 0)
         obj_targets = torch.cat(obj_targets, 0)
+        if noaug_flag is not None and self.dismiss_aug:
+            valid_id_masks = [(m & o) for m, o in zip(valid_id_masks, noaug_flag)]
         valid_id_masks = torch.cat(valid_id_masks, 0)
         if self.use_l1:
             ori_reg_targets = torch.cat(ori_reg_targets, 0)

@@ -13,7 +13,7 @@ __all__ = ['SQGARelaton']
 @MODULE_ZOO_REGISTRY.register('sqga')
 class SQGARelaton(nn.Module):
 
-    def __init__(self, embed_dim, loss, beta=0.1, np_ratio=3, ** kwargs):
+    def __init__(self, embed_dim, loss, detach=False, beta=0.1, np_ratio=3, ** kwargs):
         super().__init__()
         self.relation_layer = CustomMHA(embed_dim, 1)
         self.dropout = nn.Dropout(0.1)
@@ -33,11 +33,16 @@ class SQGARelaton(nn.Module):
         self.np_ratio = np_ratio
         self.loss = build_loss(loss)
         self.vis = True
+        self.detach = detach
 
     def forward(self, main_feats, ref_feats, target_main=None, target_ref=None, original_preds=None):
         b, m, c = ref_feats.shape
-        qlt_main = self.qlt_net(main_feats)
-        qlt_ref = self.qlt_net(ref_feats)
+        if self.detach:
+            qlt_main = self.qlt_net(main_feats.detach())
+            qlt_ref = self.qlt_net(ref_feats.detach())
+        else:
+            qlt_main = self.qlt_net(main_feats)
+            qlt_ref = self.qlt_net(ref_feats)
         real_qlt_ref = torch.cat([qlt_ref, qlt_main], dim=1)
         real_ref_feats = torch.cat([ref_feats, main_feats], dim=1)
         qmasks = []
@@ -46,8 +51,14 @@ class SQGARelaton(nn.Module):
             qmasks.append(qlt_mask_i)
         qmasks = torch.stack(qmasks)
         valid_mask = ~qmasks
-        attention, affinities = self.relation_layer(
-            main_feats.permute(1, 0, 2), real_ref_feats.permute(1, 0, 2), real_ref_feats.permute(1, 0, 2), attn_mask=valid_mask)
+        if self.detach:
+            rf = real_ref_feats.detach().permute(1, 0, 2)
+            attention, affinities = self.relation_layer(
+                main_feats.detach().permute(1, 0, 2), rf, rf, attn_mask=valid_mask)
+        else:
+            rf = real_ref_feats.permute(1, 0, 2)
+            attention, affinities = self.relation_layer(
+                main_feats.permute(1, 0, 2), rf, rf, attn_mask=valid_mask)
         attention = attention.permute(1, 0, 2)
         refined_feats = self.norm(main_feats + self.dropout(attention))
         sims = affinities[:, :, :m]

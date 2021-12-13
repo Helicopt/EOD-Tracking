@@ -16,7 +16,7 @@ __all__ = ['RelationYOLOX', 'RelationRetina']
 @MODULE_ZOO_REGISTRY.register('relation_yolox')
 class RelationYOLOX(nn.Module):
 
-    def __init__(self, relation_cfgs, yolox_kwargs, inplanes, num_to_refine=1000, num_as_ref=500, share=False, refine_objness=True, init_prior=0.01):
+    def __init__(self, relation_cfgs, yolox_kwargs, inplanes, num_to_refine=1000, num_as_ref=500, share=False, refine_objness=True, dismiss_aug=False, init_prior=0.01):
         super().__init__()
         self.vis = True
         self.prefix = self.__class__.__name__
@@ -25,6 +25,7 @@ class RelationYOLOX(nn.Module):
         self.num_to_refine = num_to_refine
         self.num_as_ref = num_as_ref
         self.size_factors = []
+        self.dismiss_aug = dismiss_aug
         for i in range(len(self.inplanes)):
             self.size_factors.insert(0, 1 << (i << 1))
         yolox_kwargs.update({'inplanes': self.inplanes})
@@ -184,6 +185,7 @@ class RelationYOLOX(nn.Module):
     #     return ret
 
     def forward(self, data):
+        noaug_flag = data['noaug_flag']
         self.vis = data.get('vis_flag', False)
         m = len(data['ref'])
         if self.training:
@@ -308,8 +310,9 @@ class RelationYOLOX(nn.Module):
         del mlvl_preds_ref
         del mlvl_preds_ref_activated
         if self.training:
-            losses_rpn = self.post_module.get_loss(target_main, mlvl_preds, mlvl_ori_loc_preds)
-            losses_refined = self.get_loss(target_main, all_fg_masks, refined_mlvl_preds, mlvl_selected_gt)
+            losses_rpn = self.post_module.get_loss(target_main, mlvl_preds, mlvl_ori_loc_preds, noaug_flag=noaug_flag)
+            losses_refined = self.get_loss(target_main, all_fg_masks, refined_mlvl_preds,
+                                           mlvl_selected_gt, noaug_flag=noaug_flag)
             losses = {}
             losses.update(all_relation_stuffs)
             losses.update(losses_rpn)
@@ -350,7 +353,7 @@ class RelationYOLOX(nn.Module):
             results = self.post_module.predictor.predict(mlvl_preds, id_feats)
         return results
 
-    def get_loss(self, target, fg_masks, mlvl_preds, gt_indices):
+    def get_loss(self, target, fg_masks, mlvl_preds, gt_indices, noaug_flag=None):
         # info_debug(mlvl_preds)
         fg_masks = torch.cat(fg_masks, dim=1)
         preds = list(zip(*mlvl_preds))
@@ -367,7 +370,10 @@ class RelationYOLOX(nn.Module):
             cat_gt_inds = [torch.cat([o[i] for o in gt_indices]) for i in range(fg_masks.size(0))]
             target_this = torch.cat([o[gti] for o, gti in zip(target[idx], cat_gt_inds)], dim=0)
             if self.roi_features_mappings[idx] == 'id':
-                valid = torch.cat([o[gti] for o, gti in zip(target[7], cat_gt_inds)], dim=0)
+                if noaug_flag is None or not self.dismiss_aug:
+                    valid = torch.cat([o[gti] for o, gti in zip(target[7], cat_gt_inds)], dim=0)
+                else:
+                    valid = torch.cat([(o[gti] & no) for o, gti, no in zip(target[7], cat_gt_inds, noaug_flag)], dim=0)
                 # valid = torch.cat(target[7], dim=0)
                 if self.post_module.all_reduce_norm and dist.is_initialized():
                     num_ids = self.post_module.get_ave_normalizer(valid)
