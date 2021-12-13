@@ -111,9 +111,9 @@ class YoloxwIDPostProcess(nn.Module):
         return mlvl_preds, mlvl_locations, mlvl_ori_loc_preds
 
     def forward(self, input):
+        noaug_flag = input['noaug_flag']
         if 'main' in input and 'ref' in input:
             input = input['main']
-        noaug_flag = input['noaug_flag']
 
         mlvl_preds, mlvl_locations, mlvl_ori_loc_preds = self.prepare_preds(input)
 
