@@ -1,3 +1,5 @@
+import os
+
 from eod.utils.general.registry_factory import MODULE_ZOO_REGISTRY
 from .no_tracking import NoTracking
 from eod.utils.general.log_helper import default_logger as logger
@@ -32,7 +34,7 @@ class Tracklet(object):
 @MODULE_ZOO_REGISTRY.register('ma_online')
 class MotionAppearanceOnlineTracker(NoTracking):
 
-    def __init__(self, output_thr=0.5, interval=30, reset_id=True, **kwargs):
+    def __init__(self, output_thr=0.5, interval=30, reset_id=True, save_feats=False, save_feats_dir='/home/toka/code/EOD/data/', **kwargs):
         super().__init__()
         if isinstance(output_thr, float):
             self.output_thr = {'default': output_thr}
@@ -44,20 +46,25 @@ class MotionAppearanceOnlineTracker(NoTracking):
         self.use_gt = True
         self.reset_id = reset_id
         self.verbose = False
+        self.save_feats = save_feats
+        self.save_feats_dir = save_feats_dir
         logger.info('Setting up %s' % (self.__class__))
 
     def initialize(self, state):
         super().initialize(state)
         state.tracklets = []
-        state.cache_items = []
+        if self.save_feats:
+            state.cache_items = []
         if self.reset_id:
             self.id_cnt = 0
         self.fr = 0
 
     def finalize(self, state):
         tag = 'data'
-        # torch.save(state.cache_items, '/home/toka/code/EOD/data/tracker.%s.%d.%s.%d.pkl' %
-        #            (tag, env.rank, self.seq_name, self.id_cnt))
+        if self.save_feats:
+            os.makedirs(self.save_feats_dir, exist_ok=True)
+            torch.save(state.cache_items, os.path.join(self.save_feats_dir, 'tracker.%s.%d.%s.%d.pkl' %
+                       (tag, env.rank, self.seq_name, self.id_cnt)))
         del state.cache_items
         return NotImplemented
 
@@ -142,7 +149,8 @@ class MotionAppearanceOnlineTracker(NoTracking):
                 data.append(gt_masks)
             # # print(embeds.shape, bboxes.shape)
             data = list(map(lambda x: x.cpu().numpy() if isinstance(x, torch.Tensor) else x, data))
-            state.cache_items.append(data)
+            if self.save_feats:
+                state.cache_items.append(data)
             ious[sims > self.high_sim_thr] += 0.6
             ious[sims < self.low_sim_thr] -= 0.3
             # ious = (gt_sims & gt_masks).float()

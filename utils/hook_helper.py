@@ -106,14 +106,18 @@ class RelMapVis(Hook):
         # exp_aff = np.exp(aff.astype('float'))
         # labels = np.around(aff / aff.sum(axis=1)[:, np.newaxis], decimals=2)
         labels = np.around(aff, decimals=3)
-        target = target.astype('int')
+        if target is not None:
+            target = target.astype('int')
 
         # Use white text if squares are dark; otherwise black.
         threshold = aff.max() / 2.
         for i, j in itertools.product(range(aff.shape[0]), range(aff.shape[1])):
             color = "white" if aff[i, j] > threshold else "black"
-            plt.text(j, i - 0.1, labels[i, j], horizontalalignment="center", color=color)
-            plt.text(j, i + 0.3, target[i, j], horizontalalignment="center", color=color)
+            if target is not None:
+                plt.text(j, i - 0.1, labels[i, j], horizontalalignment="center", color=color)
+                plt.text(j, i + 0.3, target[i, j], horizontalalignment="center", color=color)
+            else:
+                plt.text(j, i + 0.1, labels[i, j], horizontalalignment="center", color=color)
 
         plt.tight_layout()
         plt.ylabel('Main')
@@ -217,17 +221,19 @@ class RelMapVis(Hook):
                     x_logs.append(one_log)
 
                 for i in range(2):
-                    heatmap = output['relation.%d.%d.sims' % (lvl_to_show, i)][0]
-                    heatmap_target = output['relation.%d.%d.sim_target' % (lvl_to_show, i)][0]
                     relmap_tag = 'relation.%d.%d.sims' % (lvl_to_show, i)
+                    heatmap = output[relmap_tag][0]
+                    heatmap_target = output.get('relation.%d.%d.sim_target' % (lvl_to_show, i), [None])[0]
                     heatmap = heatmap[keep].softmax(dim=1)
-                    heatmap_target = heatmap_target[keep]
+                    if heatmap_target is not None:
+                        heatmap_target = heatmap_target[keep]
                     class_names_y = [x for xi, x in enumerate(logs)]
                     if heatmap.size(0) > 16:
                         heatmap = heatmap[:16]
-                        heatmap_target = heatmap_target[:16]
+                        if heatmap_target is not None:
+                            heatmap_target = heatmap_target[:16]
                         class_names_y = class_names_y[:16]
-                    if i == 0:
+                    if i == 0 or heatmap_target is None:
                         _, ref_idx = heatmap.sum(dim=0).topk(num_to_ref)
                     else:
                         mxs, _ = heatmap_target.max(dim=0)
@@ -235,10 +241,11 @@ class RelMapVis(Hook):
                     ref_idx = ref_idx.flatten()
                     class_names_x = [x_logs[int(k)] for k in ref_idx]
                     heatmap = heatmap[:, ref_idx]
-                    heatmap_target = heatmap_target[:, ref_idx]
-                    # info_debug([heatmap, heatmap_target])
                     heatmap = heatmap.detach().cpu().numpy()
-                    heatmap_target = heatmap_target.detach().cpu().numpy()
+                    if heatmap_target is not None:
+                        heatmap_target = heatmap_target[:, ref_idx]
+                        heatmap_target = heatmap_target.detach().cpu().numpy()
+                    # info_debug([heatmap, heatmap_target])
                     fig = self.plot_affinity_matrix(heatmap, heatmap_target, class_names_y, class_names_x)
                     self.summary_writer.add_figure(relmap_tag, fig, global_step=cur_iter)
                 self.summary_writer.add_image_with_boxes(
