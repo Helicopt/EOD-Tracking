@@ -113,7 +113,7 @@ dataset:
         image_reader:
           type: fs_opencv
           kwargs:
-            image_dir: /
+            image_dir: /mnt/lustre/share_data/qiaolei/datasets/MOT
             color_mode: BGR
         transformer: [*test_resize, *to_tensor]
         evaluator:
@@ -245,7 +245,6 @@ net:
               type: ota
               kwargs:
                 num_classes: *num_classes
-                img_size: *tar_size
         roi_predictor:
           type: yolox
           kwargs:
