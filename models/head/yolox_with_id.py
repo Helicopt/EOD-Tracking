@@ -13,8 +13,10 @@ from eod.tasks.det.plugins.yolov5.models.components import ConvBnAct
 from eod.utils.model.normalize import build_norm_layer
 from eod.utils.model.act_fn import build_act_fn
 
+from ..mot_module_wrapper import DualModuleWrapper
 
-__all__ = ['YoloXHeadwID', 'YoloXHeadwIDShare']
+
+__all__ = ['YoloXHeadwID', 'YoloXHeadwIDLessShare', 'YoloXHeadwIDShare']
 
 
 @MODULE_ZOO_REGISTRY.register('YoloXHeadwID')
@@ -211,6 +213,95 @@ class YoloXHeadwID(nn.Module):
 
     def get_outplanes(self):
         return copy.copy(self.out_planes)
+
+
+@MODULE_ZOO_REGISTRY.register('YoloXHeadwIDLessShare')
+class YoloXHeadwIDLessShare(YoloXHeadwID):
+
+    def __init__(self,
+                 num_classes,
+                 num_ids,
+                 num_point=1,
+                 width=0.375,
+                 inplanes=[256, 512, 1024],
+                 outplanes=256,
+                 act_fn={'type': 'Silu'},
+                 depthwise=False,
+                 initializer=None,
+                 class_activation='sigmoid',
+                 normalize={'type': 'solo_bn'},
+                 init_prior=0.01):
+        super().__init__(num_classes,
+                         num_ids,
+                         num_point=num_point,
+                         width=width,
+                         inplanes=inplanes,
+                         outplanes=outplanes,
+                         act_fn=act_fn,
+                         depthwise=depthwise,
+                         initializer=initializer,
+                         class_activation=class_activation,
+                         normalize=normalize,
+                         init_prior=init_prior)
+        self.stems_id = nn.ModuleList()
+        Conv = DWConv if depthwise else ConvBnAct
+
+        for i in range(self.num_levels):
+            inplane = int(inplanes[i])
+            outplane = int(outplanes * width)
+            self.stems_id.append(
+                ConvBnAct(
+                    inplane,
+                    outplane,
+                    kernel_size=1,
+                    stride=1,
+                    act_fn=act_fn,
+                    normalize=normalize
+                )
+            )
+
+    def forward_net(self, features, idx=0):
+        mlvl_preds = []
+        mlvl_roi_features = []
+        for i in range(self.num_levels):
+            feat = self.stems[i](features[i])
+            feat_id = self.stems_id[i](features[i])
+            cls_feat = self.cls_convs[i](feat)
+            loc_feat = self.reg_convs[i](feat)
+            id_feat = self.id_convs[i](feat_id)
+            cls_pred = self.cls_preds[i](cls_feat)
+            loc_pred = self.reg_preds[i](loc_feat)
+            id_pred = self.id_preds(id_feat)
+            obj_pred = self.obj_preds[i](loc_feat)
+            mlvl_preds.append((cls_pred, loc_pred, id_pred, obj_pred))
+            mlvl_roi_features.append((cls_feat, loc_feat, id_feat))
+        return mlvl_preds, mlvl_roi_features
+
+
+@MODULE_ZOO_REGISTRY.register('YoloXHeadwIDDual')
+class YoloXHeadwIDDual(YoloXHeadwIDLessShare):
+
+    def __init__(self, *args, **kwargs):
+        self.det_idx = kwargs.pop('det_idx', 0)
+        self.trk_idx = kwargs.pop('trk_idx', 1)
+        super().__init__(*args, **kwargs)
+
+    def forward_net(self, features, idx=0):
+        mlvl_preds = []
+        mlvl_roi_features = []
+        for i in range(self.num_levels):
+            feat = self.stems[i](features[DualModuleWrapper.get(self.det_idx)][i])
+            feat_id = self.stems_id[i](features[DualModuleWrapper.get(self.trk_idx)][i])
+            cls_feat = self.cls_convs[i](feat)
+            loc_feat = self.reg_convs[i](feat)
+            id_feat = self.id_convs[i](feat_id)
+            cls_pred = self.cls_preds[i](cls_feat)
+            loc_pred = self.reg_preds[i](loc_feat)
+            id_pred = self.id_preds(id_feat)
+            obj_pred = self.obj_preds[i](loc_feat)
+            mlvl_preds.append((cls_pred, loc_pred, id_pred, obj_pred))
+            mlvl_roi_features.append((cls_feat, loc_feat, id_feat))
+        return mlvl_preds, mlvl_roi_features
 
 
 @MODULE_ZOO_REGISTRY.register('YoloXHeadwIDShare')
