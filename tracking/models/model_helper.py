@@ -11,6 +11,7 @@ from eod.utils.general.registry_factory import MODEL_HELPER_REGISTRY
 from eod.utils.env.gene_env import to_device, patterns_match
 from eod.models.model_helper import ModelHelper
 from eod.utils.env.dist_helper import env
+from ..utils.debug import info_debug
 
 __all__ = ['MOTModelHelper']
 
