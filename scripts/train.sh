@@ -17,6 +17,7 @@ partition=UCG_Share
 GPU=8
 NUM=2
 ENV_NAME=s0.3.4
+backbend=linklink
 
 while [[ $# -gt 0 ]]
 do
@@ -40,6 +41,10 @@ do
             ;;
         -c|--config)
             config=$2
+            shift 2
+            ;;
+        -b|--backbend)
+            backbend=$2
             shift 2
             ;;
         -e|--env-name)
@@ -77,8 +82,10 @@ EOF
 spring.submit run -p $partition -n$TOTAL \
     --job-name=$(basename `pwd`) \
     --gpu \
+    -x SH-IDC1-10-198-8-237 \
     --cpus-per-task 5 \
 "python -m eod train \
   --config=$config \
   --display=1 \
+  --backend=$backbend \
   2>&1 | tee log.train.$T.$(basename $config) "
