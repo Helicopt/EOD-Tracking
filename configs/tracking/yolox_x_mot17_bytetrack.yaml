@@ -15,11 +15,14 @@ runtime:
         nonref: True
 
 tracker:
-  type: pure_m
+  type: bytetracker
   kwargs:
-    sim_thr: 0.4
-    output_thr: 0.5
-    two_step: True
+    cfg: 
+      track_thresh: 0.6
+      track_buffer: 30
+      match_thresh: 0.9
+      conf_thresh: 0.1
+
 
 mosaic: &mosaic
   type: mosaic
@@ -109,9 +112,9 @@ dataset:
                - /mnt/lustre/share_data/qiaolei/datasets/MOT
             color_mode: BGR
         transformer: [*mosaic, *random_perspective, *mixup, *augment_hsv, *flip, *train_resize, *to_tensor]
-        cache:
-             cache_dir: ./caches
-             cache_name: mot17_mix_train.pkl
+        # cache:
+        #      cache_dir: ./caches
+        #      cache_name: mot17_mix_train.pkl
         clip_box: False
     batch_sampler:
       type: base
@@ -156,9 +159,9 @@ dataset:
         #        fppi: [0.5, 1.0, 1.5, 2.0, 3.0, 4.0]
         #        num_classes: *num_classes
         clip_box: True
-        cache:
-          cache_dir: ./caches
-          cache_name: mot20_test.pkl
+        # cache:
+        #   cache_dir: ./caches
+        #   cache_name: mot20_test.pkl
     batch_sampler:
       type: sequence
       kwargs:
@@ -177,8 +180,8 @@ dataset:
 
 trainer: # Required.
   max_epoch: &max_epoch 80             # total epochs for the training
-  save_freq: 5
-  test_freq: 5
+  save_freq: 1
+  test_freq: 1
   only_save_latest: True
   optimizer:                 # optimizer = SGD(params,lr=0.01,momentum=0.937,weight_decay=0.0005)
     register_type: yolov5
@@ -203,7 +206,7 @@ saver:
   pretrain_model: /mnt/lustre/share_data/qiaolei/pretrain/pretrain_models/mot/yolox_ckpt_best.pth
   results_dir: results_dir/yolox_x_mot17_ori_submit_v1
   auto_resume: True
-  save_result: False
+  save_result: True
 
 hooks:
   - type: yolox_noaug
