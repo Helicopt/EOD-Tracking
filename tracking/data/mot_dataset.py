@@ -339,7 +339,7 @@ class MultiFrameDataset(CustomDataset):
                     'label': int(cls)
                 }
                 if img_bboxes.shape[1] >= 8:
-                    res['track_id'] = int(img_bboxes[i][7])
+                    res['track_id'] = int(img_bboxes[i][8])
                 out_res.append(res)
         return out_res
 

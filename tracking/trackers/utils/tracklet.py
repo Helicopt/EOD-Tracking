@@ -17,6 +17,7 @@ class STrack(BaseTrack):
         self.score = score
         self.label = label
         self.tracklet_len = 0
+        self.track_conf = 1.0
 
     def predict(self):
         mean_state = self.mean.copy()
@@ -136,7 +137,7 @@ class STrack(BaseTrack):
     
     @property
     def dt_bboxes(self):
-        return np.concatenate((self.tlbr, np.array([self.score, self.label, self.track_id])), axis=0)
+        return np.concatenate((self.tlbr, np.array([self.score, self.label, self.track_conf, self.track_id])), axis=0)
 
     
     def __repr__(self):
