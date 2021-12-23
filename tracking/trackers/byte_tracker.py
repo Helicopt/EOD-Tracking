@@ -221,9 +221,10 @@ class BYTETracker(NoTracking):
         # output_dets = torch.cat([bboxes, ids], dim=1)
         if output_targets.size != 0:
             output_targets = output_targets[output_targets[:, -1] > 0]
-        
-        dt_boxes = torch.from_numpy(output_targets)
-        raw_dt_boxes = self.postprocess(dt_boxes, inputs['image_info'])
+            dt_boxes = torch.from_numpy(output_targets)
+            raw_dt_boxes = self.postprocess(dt_boxes, inputs['image_info'])
+        else:
+            raw_dt_boxes = torch.from_numpy(output_targets)
         inputs['dt_bboxes'] = raw_dt_boxes
         
         return inputs
