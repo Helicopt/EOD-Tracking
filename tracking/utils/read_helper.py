@@ -10,23 +10,19 @@ from os.path import realpath
 import numpy as np
 from petrel_client.client import Client
 import json
-import jsonlines
 import os
 
 pyv = sys.version[0]
 
 
-ceph_conf_path = conf_path=os.path.join(os.path.dirname(__file__), 'petrel_oss.cfg')
+ceph_conf_path = '~/.s3cfg'
 
 
 def bytes_to_img(value):
     img = None
-    if pyv == '2':
-        img_array = np.fromstring(value, np.uint8)
-        img = cv2.imdecode(img_array, cv2.CV_LOAD_IMAGE_COLOR)
-    if pyv == '3':
-        img_array = np.frombuffer(value, np.uint8)
-        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+    
+    img_array = np.frombuffer(value, np.uint8)
+    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
 
     assert img is not None
     return img
@@ -34,7 +30,7 @@ def bytes_to_img(value):
 
 class ImageHelper(object):
     def __init__(self):
-        self.client = Client(conf_path=conf_path)
+        self.client = Client(conf_path=ceph_conf_path)
 
     def imread(self, path):
         try:
