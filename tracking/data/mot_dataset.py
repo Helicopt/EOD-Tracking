@@ -300,10 +300,12 @@ class MultiFrameDataset(CustomDataset):
         return ret
 
     def dump(self, output):
+        out_res = []
         image_info = output['image_info']
+        if not output['dt_bboxes'].numel(): # box为空
+            return out_res
         bboxes = self.tensor2numpy(output['dt_bboxes'])
         image_ids = output['image_id']
-        out_res = []
         for b_ix in range(len(image_info)):
             info = image_info[b_ix]
             height, width = map(int, info[3:5])
