@@ -4,6 +4,7 @@ import os
 import numpy as np
 import sys
 import pandas as pd
+import time
 from collections import Counter, OrderedDict
 
 from eod.utils.general.log_helper import default_logger as logger
@@ -187,7 +188,9 @@ class TrackEval(TrackingEvaluator):
             gt_writer[f].close()
         
         # process dt
-        dt_write_path = os.path.join(write_path, 'trackers', 'base')
+        tracker_name = 'trk-' + time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
+        logger.info('tracker_name: {}'.format(tracker_name))
+        dt_write_path = os.path.join(write_path, 'trackers', tracker_name)
         os.makedirs(dt_write_path, exist_ok=True)
         dt_writer = {}
         for target in dt:
@@ -203,11 +206,12 @@ class TrackEval(TrackingEvaluator):
             dt_writer[f].close()
 
         self.trackeval_dataset_config['SEQMAP_FILE'] = seq_list_path
+        self.trackeval_dataset_config['TRACKERS_TO_EVAL'] = tracker_name
         track_eval_dataset_list = [trackeval.datasets.MotChallenge2DBox(self.trackeval_dataset_config)]
         
         output_res, output_msg = self.trackeval_evaluator.evaluate(track_eval_dataset_list, self.trackeval_metrics_list)
         
-        res = output_res['MotChallenge2DBox']['base']['COMBINED_SEQ']['pedestrian']
+        res = output_res['MotChallenge2DBox'][tracker_name]['COMBINED_SEQ']['pedestrian']
         
         metric = {}
         for item in self.trackeval_metric_config['METRICS']:
