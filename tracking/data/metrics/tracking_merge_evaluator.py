@@ -206,7 +206,7 @@ class TrackEval(TrackingEvaluator):
             dt_writer[f].close()
 
         self.trackeval_dataset_config['SEQMAP_FILE'] = seq_list_path
-        self.trackeval_dataset_config['TRACKERS_TO_EVAL'] = tracker_name
+        self.trackeval_dataset_config['TRACKERS_TO_EVAL'] = [tracker_name]
         track_eval_dataset_list = [trackeval.datasets.MotChallenge2DBox(self.trackeval_dataset_config)]
         
         output_res, output_msg = self.trackeval_evaluator.evaluate(track_eval_dataset_list, self.trackeval_metrics_list)
