@@ -154,6 +154,7 @@ class TrackEval(TrackingEvaluator):
         seq_list_path = os.path.join(gt_write_path, 'list.txt')
         gt_writer['seqmaps'] = open(seq_list_path, 'w')
         gt_writer['seqmaps'].writelines('name\n')
+        gt_sequence_names = set()
         for filename, targets in gt.items():
             seq_name, frame_id = self.parse_seq_info(filename)
             seq_path = os.path.join(gt_write_path, seq_name, 'gt')
@@ -161,6 +162,7 @@ class TrackEval(TrackingEvaluator):
             if seq_name not in gt_writer:
                 gt_writer[seq_name] = open(os.path.join(seq_path, f'gt.txt'), 'w')
                 gt_writer['seqmaps'].writelines(f'{seq_name}\n')
+                gt_sequence_names.add(seq_name)
                 try:
                     config=configparser.ConfigParser()
                     # config.read(os.path.join(gt_write_path, seq_name, 'seqinfo.ini'))
@@ -193,10 +195,17 @@ class TrackEval(TrackingEvaluator):
         dt_write_path = os.path.join(write_path, 'trackers', tracker_name)
         os.makedirs(dt_write_path, exist_ok=True)
         dt_writer = {}
+        
+        # avoid tracker result is empty
+        for seq_name in gt_sequence_names:
+            logger.info('seq_name: {}'.format(seq_name))
+            dt_writer[seq_name] = open(os.path.join(dt_write_path, f'{seq_name}.txt'), 'w')
+        
         for target in dt:
             filename = target['image_id']
             seq_name, frame_id = self.parse_seq_info(filename)
             if seq_name not in dt_writer:
+                logger.info('seq_name: {}'.format(seq_name))
                 dt_writer[seq_name] = open(os.path.join(dt_write_path, f'{seq_name}.txt'), 'w')
             track_id = target['track_id']
             x1, y1, x2, y2 = target['bbox']
