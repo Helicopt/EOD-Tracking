@@ -8,14 +8,10 @@ __all__ = ['NoTracking']
 
 
 class TrackState(object):
-    New = 0
-    Tracked = 1
-    Lost = 2
-    Removed = 3
 
     def __init__(self):
         self.inited = False
-           
+
 
 @MODULE_ZOO_REGISTRY.register('no_tracking')
 class NoTracking(object):

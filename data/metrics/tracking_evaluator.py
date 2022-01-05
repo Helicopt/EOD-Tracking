@@ -54,7 +54,7 @@ class TrackingEvaluator(CustomEvaluator):
         if self.class_names is None:
             self.class_names = eval_class_idxs
         self.iou_types = iou_types
-        
+
     def load_gts(self, gt_files):
         # maintain a dict to store original img information
         # key is image dir,value is image_height,image_width,instances

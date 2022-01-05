@@ -1,11 +1,13 @@
 import numpy as np
 
 from .kalman_filter import KalmanFilter
-from ..basetrack import BaseTrack
-from ..no_tracking import TrackState
+from ..byte_tracker_misc.basetrack import BaseTrack
+from ..basetrack import ByteTrackState
+
 
 class STrack(BaseTrack):
     shared_kalman = KalmanFilter()
+
     def __init__(self, tlwh, score, label):
 
         # wait activate
@@ -21,7 +23,7 @@ class STrack(BaseTrack):
 
     def predict(self):
         mean_state = self.mean.copy()
-        if self.state != TrackState.Tracked:
+        if self.state != ByteTrackState.Tracked:
             mean_state[7] = 0
         self.mean, self.covariance = self.kalman_filter.predict(mean_state, self.covariance)
 
@@ -31,7 +33,7 @@ class STrack(BaseTrack):
             multi_mean = np.asarray([st.mean.copy() for st in stracks])
             multi_covariance = np.asarray([st.covariance for st in stracks])
             for i, st in enumerate(stracks):
-                if st.state != TrackState.Tracked:
+                if st.state != ByteTrackState.Tracked:
                     multi_mean[i][7] = 0
             multi_mean, multi_covariance = STrack.shared_kalman.multi_predict(multi_mean, multi_covariance)
             for i, (mean, cov) in enumerate(zip(multi_mean, multi_covariance)):
@@ -45,7 +47,7 @@ class STrack(BaseTrack):
         self.mean, self.covariance = self.kalman_filter.initiate(self.tlwh_to_xyah(self._tlwh))
 
         self.tracklet_len = 0
-        self.state = TrackState.Tracked
+        self.state = ByteTrackState.Tracked
         if frame_id == 1:
             self.is_activated = True
         # self.is_activated = True
@@ -57,7 +59,7 @@ class STrack(BaseTrack):
             self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh)
         )
         self.tracklet_len = 0
-        self.state = TrackState.Tracked
+        self.state = ByteTrackState.Tracked
         self.is_activated = True
         self.frame_id = frame_id
         if new_id:
@@ -78,7 +80,7 @@ class STrack(BaseTrack):
         new_tlwh = new_track.tlwh
         self.mean, self.covariance = self.kalman_filter.update(
             self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh))
-        self.state = TrackState.Tracked
+        self.state = ByteTrackState.Tracked
         self.is_activated = True
 
         self.score = new_track.score
@@ -134,13 +136,9 @@ class STrack(BaseTrack):
         ret[2:] += ret[:2]
         return ret
 
-    
     @property
     def dt_bboxes(self):
         return np.concatenate((self.tlbr, np.array([self.score, self.label, self.track_conf, self.track_id])), axis=0)
 
-    
     def __repr__(self):
         return 'OT_{}_({}-{})'.format(self.track_id, self.start_frame, self.end_frame)
-    
-    

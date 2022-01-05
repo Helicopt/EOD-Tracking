@@ -7,7 +7,7 @@ import torch
 import torch.nn.functional as F
 
 from .utils import matching
-from .basetrack import BaseTrack
+from .byte_tracker_misc.basetrack import BaseTrack
 from .no_tracking import NoTracking, TrackState
 from .utils.tracklet import STrack
 
@@ -23,24 +23,23 @@ class SimpleTracker(NoTracking):
         self.removed_stracks = []  # type: list[STrack]
 
         self.frame_id = 0
-        
+
         self.cfg = cfg
         # self.det_thresh = args.track_thresh
         self.track_thresh = self.cfg.get('track_thresh', 0.6)
         self.track_buffer = self.cfg.get('track_buffer', 30)
         self.conf_thresh = self.cfg.get('conf_thresh', 0.1)
         self.match_thresh = self.cfg.get('match_thresh', 0.9)
-        
-        
+
         self.det_thresh = self.track_thresh + 0.1
         self.buffer_size = int(frame_rate / 30.0 * self.track_buffer)
         self.max_time_lost = self.buffer_size
-        
+
         self.device = None
-        
+
     def initialize(self, state):
         super().initialize(state)
-        
+
         self.tracked_stracks = []  # type: list[STrack]
         self.lost_stracks = []  # type: list[STrack]
         self.removed_stracks = []  # type: list[STrack]
@@ -49,8 +48,8 @@ class SimpleTracker(NoTracking):
 
     def finalize(self, state):
         tag = 'data'
-        return NotImplemented    
-    
+        return NotImplemented
+
     def preprocess(self, bboxes, info):
         raw_bboxes = bboxes
         bboxes = bboxes.clone()
@@ -62,26 +61,25 @@ class SimpleTracker(NoTracking):
         bboxes[:, [1, 3]] -= pad_h
         bboxes[:, [1, 3]] /= scale_h
         return raw_bboxes, bboxes
-    
+
     def forward(self, state, inputs):
         self.frame_id += 1
         activated_starcks = []
         refind_stracks = []
         lost_stracks = []
         removed_stracks = []
-        
+
         output_results, real_output_results = self.preprocess(inputs['dt_bboxes'], inputs['image_info'])
         # seq, gt = self.get_gt(inputs['image_id'])
         self.device = output_results.device
-        
+
         total_scores = real_output_results[:, 4]
         total_bboxes = real_output_results[:, :4]
         total_cls = real_output_results[:, 5]
-        
+
         #TODO: add
-        
+
         # return None
-        
 
     def postprocess(self, bboxes, info):
         # raw_bboxes = bboxes
@@ -93,8 +91,9 @@ class SimpleTracker(NoTracking):
         _bboxes[:, [0, 2]] += pad_w
         _bboxes[:, [1, 3]] *= scale_h
         _bboxes[:, [1, 3]] += pad_h
-        
+
         return _bboxes
+
 
 def joint_stracks(tlista, tlistb):
     exists = {}

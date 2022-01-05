@@ -1,13 +1,20 @@
 import numpy as np
 from collections import OrderedDict
-from .no_tracking import TrackState
+
+
+class ByteTrackState:
+    New = 0
+    Tracked = 1
+    Lost = 2
+    Removed = 3
+
 
 class BaseTrack(object):
     _count = 0
 
     track_id = 0
     is_activated = False
-    state = TrackState.New
+    state = ByteTrackState.New
 
     history = OrderedDict()
     features = []
@@ -39,7 +46,7 @@ class BaseTrack(object):
         raise NotImplementedError
 
     def mark_lost(self):
-        self.state = TrackState.Lost
+        self.state = ByteTrackState.Lost
 
     def mark_removed(self):
-        self.state = TrackState.Removed
+        self.state = ByteTrackState.Removed

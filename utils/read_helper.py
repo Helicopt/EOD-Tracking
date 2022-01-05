@@ -8,9 +8,13 @@ import cv2
 from os.path import realpath
 # cv2.ocl.setUseOpenCL(False)
 import numpy as np
-from petrel_client.client import Client
 import json
 import os
+
+try:
+    from petrel_client.client import Client
+except ImportError:
+    Client = None
 
 pyv = sys.version[0]
 
@@ -20,7 +24,7 @@ ceph_conf_path = '~/.s3cfg'
 
 def bytes_to_img(value):
     img = None
-    
+
     img_array = np.frombuffer(value, np.uint8)
     img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
 
@@ -30,6 +34,7 @@ def bytes_to_img(value):
 
 class ImageHelper(object):
     def __init__(self):
+        assert Client is not None, 'petrel_client module not found. please install before using ceph'
         self.client = Client(conf_path=ceph_conf_path)
 
     def imread(self, path):

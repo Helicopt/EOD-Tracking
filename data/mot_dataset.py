@@ -112,7 +112,7 @@ class MultiFrameDataset(CustomDataset):
                 self.seq_metas.append((seq_name, frame_id))
                 if 'image_height' not in data or 'image_width' not in data:
                     logger.warning('image size is not provided, '
-                                    'set aspect grouping to 1.')
+                                   'set aspect grouping to 1.')
                     self.aspect_ratios.append(1.0)
                 else:
                     self.aspect_ratios.append(data['image_height'] / data['image_width'])
@@ -302,7 +302,7 @@ class MultiFrameDataset(CustomDataset):
     def dump(self, output):
         out_res = []
         image_info = output['image_info']
-        if not output['dt_bboxes'].numel(): # box为空
+        if not output['dt_bboxes'].numel():  # not even a box
             return out_res
         bboxes = self.tensor2numpy(output['dt_bboxes'])
         image_ids = output['image_id']

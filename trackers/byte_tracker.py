@@ -6,11 +6,11 @@ import copy
 import torch
 import torch.nn.functional as F
 
-from .utils.kalman_filter import KalmanFilter
-from .utils import matching
-from .basetrack import BaseTrack
+from .byte_tracker_misc.utils.kalman_filter import KalmanFilter
+from .byte_tracker_misc import matching
+from .byte_tracker_misc.basetrack import BaseTrack
 from .no_tracking import NoTracking, TrackState
-from .utils.tracklet import STrack
+from .byte_tracker_misc.utils.tracklet import STrack
 from .simple_tracker import joint_stracks, sub_stracks, remove_duplicate_stracks
 
 from eod.utils.general.registry_factory import MODULE_ZOO_REGISTRY
@@ -25,25 +25,24 @@ class BYTETracker(NoTracking):
         self.removed_stracks = []  # type: list[STrack]
 
         self.frame_id = 0
-        
+
         self.cfg = cfg
         # self.det_thresh = args.track_thresh
         self.track_thresh = self.cfg.get('track_thresh', 0.6)
         self.track_buffer = self.cfg.get('track_buffer', 30)
         self.conf_thresh = self.cfg.get('conf_thresh', 0.1)
         self.match_thresh = self.cfg.get('match_thresh', 0.9)
-        
-        
+
         self.det_thresh = self.track_thresh + 0.1
         self.buffer_size = int(frame_rate / 30.0 * self.track_buffer)
         self.max_time_lost = self.buffer_size
         self.kalman_filter = KalmanFilter()
-        
+
         self.device = None
-        
+
     def initialize(self, state):
         super().initialize(state)
-        
+
         self.tracked_stracks = []  # type: list[STrack]
         self.lost_stracks = []  # type: list[STrack]
         self.removed_stracks = []  # type: list[STrack]
@@ -52,8 +51,8 @@ class BYTETracker(NoTracking):
 
     def finalize(self, state):
         tag = 'data'
-        return NotImplemented    
-    
+        return NotImplemented
+
     # def get_gt(self, image_id):
     #     from senseTk.common import TrackSet
     #     frame_id = int(os.path.basename(image_id).split('.')[0])
@@ -67,7 +66,7 @@ class BYTETracker(NoTracking):
     #         return seq, self.gt[frame_id]
     #     else:
     #         return seq, None
-    
+
     def preprocess(self, bboxes, info):
         raw_bboxes = bboxes
         bboxes = bboxes.clone()
@@ -79,30 +78,30 @@ class BYTETracker(NoTracking):
         bboxes[:, [1, 3]] -= pad_h
         bboxes[:, [1, 3]] /= scale_h
         return raw_bboxes, bboxes
-    
+
     def forward(self, state, inputs):
         self.frame_id += 1
         activated_starcks = []
         refind_stracks = []
         lost_stracks = []
         removed_stracks = []
-        
+
         output_results, real_output_results = self.preprocess(inputs['dt_bboxes'], inputs['image_info'])
         # seq, gt = self.get_gt(inputs['image_id'])
         self.device = output_results.device
-        
+
         total_scores = real_output_results[:, 4]
         total_bboxes = real_output_results[:, :4]
         total_cls = real_output_results[:, 5]
-        
+
         remain_inds = total_scores > self.track_thresh
-        
+
         # still
         remain_inds = remain_inds.cpu().numpy()
         scores = total_scores.cpu().numpy()
         bboxes = total_bboxes.cpu().numpy()
         total_cls = total_cls.cpu().numpy()
-        
+
         inds_low = scores > self.conf_thresh
         inds_high = scores < self.track_thresh
 
@@ -113,7 +112,6 @@ class BYTETracker(NoTracking):
         scores_keep = scores[remain_inds]
         scores_second = scores[inds_second]
         cls_second = total_cls[inds_second]
-        
 
         if len(dets) > 0:
             '''Detections'''
@@ -155,7 +153,7 @@ class BYTETracker(NoTracking):
         if len(dets_second) > 0:
             '''Detections'''
             detections_second = [STrack(STrack.tlbr_to_tlwh(tlbr), s, c) for
-                          (tlbr, s, c) in zip(dets_second, scores_second, cls_second)]
+                                 (tlbr, s, c) in zip(dets_second, scores_second, cls_second)]
         else:
             detections_second = []
         r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
@@ -227,7 +225,7 @@ class BYTETracker(NoTracking):
         else:
             raw_dt_boxes = torch.from_numpy(output_targets)
         inputs['dt_bboxes'] = raw_dt_boxes
-        
+
         return inputs
 
     def postprocess(self, bboxes, info):
@@ -240,5 +238,5 @@ class BYTETracker(NoTracking):
         _bboxes[:, [0, 2]] += pad_w
         _bboxes[:, [1, 3]] *= scale_h
         _bboxes[:, [1, 3]] += pad_h
-        
+
         return _bboxes
