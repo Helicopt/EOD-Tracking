@@ -28,9 +28,15 @@ class MOTFP16Runner(BaseRunner):
         model_dtype = torch.float32
         if self.fp16 and self.backend == 'linklink':
             model_dtype = self.model.dtype
-        if batch['main']['image'].device != torch.device('cuda') or \
-                batch['main']['image'].dtype != model_dtype:
-            batch = to_device(batch, device=torch.device('cuda'), dtype=model_dtype)
+        if 'main' in batch:
+            if batch['main']['image'].device != torch.device('cuda') or \
+                    batch['main']['image'].dtype != model_dtype:
+
+                batch = to_device(batch, device=torch.device('cuda'), dtype=model_dtype)
+        else:
+            if batch['image'].device != torch.device('cuda') or \
+                    batch['image'].dtype != model_dtype:
+                batch = to_device(batch, device=torch.device('cuda'), dtype=model_dtype)
         return batch
 
     def build_fake_model(self):

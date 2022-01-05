@@ -21,6 +21,8 @@ from eod.data.data_utils import get_image_size
 
 from torch.nn.modules.utils import _pair
 
+from ..utils.read_helper import read_lines
+
 __all__ = ['MultiFrameDataset']
 
 
@@ -91,31 +93,29 @@ class MultiFrameDataset(CustomDataset):
         if not isinstance(self.meta_file, list):
             self.meta_file = [self.meta_file]
         for idx, meta_file in enumerate(self.meta_file):
-            with open(meta_file, "r") as f:
-                for line in f:
-                    data = json.loads(line)
-                    filename = data['filename']
-                    seq_name, frame_id = self.parse_seq_info(filename, data['formatter'])
-                    if seq_name not in self.sequences:
-                        self.sequences[seq_name] = {}
-                        self.id_mapping[seq_name] = {}
-                    for instance in data.get('instances', []):
-                        track_id = instance.get('track_id', -1)
-                        if track_id >= 0 and track_id not in self.id_mapping[seq_name]:
-                            self.id_mapping[seq_name][track_id] = self.next_id
-                        instance['track_id'] = self.id_mapping[seq_name].get(track_id, 0)
-                    self.sequences[seq_name][frame_id] = len(self.metas)
-                    if self.label_mapping is not None:
-                        data = self.set_label_mapping(data, self.label_mapping[idx], 0)
-                        data['image_source'] = idx
-                    self.metas.append(data)
-                    self.seq_metas.append((seq_name, frame_id))
-                    if 'image_height' not in data or 'image_width' not in data:
-                        logger.warning('image size is not provided, '
-                                       'set aspect grouping to 1.')
-                        self.aspect_ratios.append(1.0)
-                    else:
-                        self.aspect_ratios.append(data['image_height'] / data['image_width'])
+            for data in read_lines(meta_file):
+                filename = data['filename']
+                seq_name, frame_id = self.parse_seq_info(filename, data['formatter'])
+                if seq_name not in self.sequences:
+                    self.sequences[seq_name] = {}
+                    self.id_mapping[seq_name] = {}
+                for instance in data.get('instances', []):
+                    track_id = instance.get('track_id', -1)
+                    if track_id >= 0 and track_id not in self.id_mapping[seq_name]:
+                        self.id_mapping[seq_name][track_id] = self.next_id
+                    instance['track_id'] = self.id_mapping[seq_name].get(track_id, 0)
+                self.sequences[seq_name][frame_id] = len(self.metas)
+                if self.label_mapping is not None:
+                    data = self.set_label_mapping(data, self.label_mapping[idx], 0)
+                    data['image_source'] = idx
+                self.metas.append(data)
+                self.seq_metas.append((seq_name, frame_id))
+                if 'image_height' not in data or 'image_width' not in data:
+                    logger.warning('image size is not provided, '
+                                   'set aspect grouping to 1.')
+                    self.aspect_ratios.append(1.0)
+                else:
+                    self.aspect_ratios.append(data['image_height'] / data['image_width'])
         self.seq_controls = {}
         for seq in self.sequences:
             frs = list(self.sequences[seq].keys())
@@ -300,10 +300,12 @@ class MultiFrameDataset(CustomDataset):
         return ret
 
     def dump(self, output):
+        out_res = []
         image_info = output['image_info']
+        if not output['dt_bboxes'].numel():  # not even a box
+            return out_res
         bboxes = self.tensor2numpy(output['dt_bboxes'])
         image_ids = output['image_id']
-        out_res = []
         for b_ix in range(len(image_info)):
             info = image_info[b_ix]
             height, width = map(int, info[3:5])

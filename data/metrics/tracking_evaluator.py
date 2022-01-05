@@ -14,6 +14,7 @@ from eod.utils.general.yaml_loader import IncludeLoader
 from eod.utils.general.registry_factory import EVALUATOR_REGISTRY
 from eod.tasks.det.data.metrics.custom_evaluator import CustomEvaluator, Metric
 
+from ...utils.read_helper import read_lines
 
 __all__ = ['TrackingEvaluator']
 
@@ -53,6 +54,53 @@ class TrackingEvaluator(CustomEvaluator):
         if self.class_names is None:
             self.class_names = eval_class_idxs
         self.iou_types = iou_types
+
+    def load_gts(self, gt_files):
+        # maintain a dict to store original img information
+        # key is image dir,value is image_height,image_width,instances
+        original_gt = {}
+        gts = {
+            'bbox_num': Counter(),
+            'gt_num': Counter(),
+            'image_num': 0,
+            'image_ids': list()
+        }
+        if not isinstance(gt_files, list):
+            gt_files = [gt_files]
+        for gt_file_idx, gt_file in enumerate(gt_files):
+            gt_img_ids = set()
+            for img in read_lines(gt_file):
+                if self.label_mapping is not None:
+                    img = self.set_label_mapping(img, gt_file_idx)
+                image_id = img['filename']
+                original_gt[img['filename']] = copy.deepcopy(img)
+                gt_img_ids.add(image_id)
+                gts['image_num'] += 1
+                for idx, instance in enumerate(img.get('instances', [])):
+                    instance['detected'] = False
+                    # remember the original index within an image of annoated format so
+                    # we can recover from distributed format into original format
+                    is_ignore = instance.get('is_ignored', False)
+                    instance['local_index'] = idx
+                    label = instance.get('label', 0)
+                    # ingore mode
+                    # 0 indicates all classes share ignore region, label is set to -1
+                    # 1 indicates different classes different ignore region, ignore label must be provided
+                    # 2 indicates we ingore all ignore regions
+                    if is_ignore and self.ignore_mode == 0:
+                        label = -1
+                    box_by_label = gts.setdefault(label, {})
+                    box_by_img = box_by_label.setdefault(image_id, {'gts': []})
+                    gt_by_img = box_by_img['gts']
+                    gts['bbox_num'][label] += 1
+                    if not is_ignore:
+                        gt_by_img.append(instance)
+                        gts['gt_num'][label] += 1
+                    else:
+                        ign_by_img = box_by_img.setdefault('ignores', [])
+                        ign_by_img.append(instance)
+            gts['image_ids'].append(gt_img_ids)
+        return gts, original_gt
 
     def get_miss_rate(self, tp, fp, scores, image_num, gt_num, return_index=False):
         """
