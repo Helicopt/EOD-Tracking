@@ -71,6 +71,8 @@ class MOTModuleWrapper(nn.Module):
         new_args, new_kwargs = self.__get_input(args, kwargs, tag='main')
         output_main = self.inner_module(*new_args, **new_kwargs)
         output_ref = []
+        if 'ref_cache' in args[0] and args[0]['ref_cache'][0]:
+            return {'main': output_main, 'ref': args[0]['ref']}
         with torch.no_grad():
             for i in range(num_ref):
                 new_args, new_kwargs = self.__get_input(args, kwargs, tag='ref', idx=i)
