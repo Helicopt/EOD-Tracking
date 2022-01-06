@@ -45,8 +45,11 @@ class MOTModelHelper(ModelHelper):
             if 'main' in output and 'ref' in output:
                 input['main'].update(output['main'])
                 for u, v in zip(input['ref'], output['ref']):
-                    kept_keys = ['strides', 'gt_bboxes', 'image_info']
-                    kept_dict = {k: u[k] for k in kept_keys if k in u}
+                    if not ('ref_cache' in input and input['ref_cache'][0]):
+                        kept_keys = ['strides', 'gt_bboxes', 'image_info']
+                        kept_dict = {k: u[k] for k in kept_keys if k in u}
+                    else:
+                        kept_dict = dict(u)
                     u.clear()
                     u.update(v)
                     u.update(kept_dict)

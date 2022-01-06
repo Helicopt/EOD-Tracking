@@ -9,7 +9,8 @@ import torch.nn.functional as F
 from .byte_tracker_misc.utils.kalman_filter import KalmanFilter
 from .byte_tracker_misc.utils import matching
 from .byte_tracker_misc.basetrack import BaseTrack
-from .no_tracking import NoTracking, TrackState
+from .no_tracking import NoTracking
+from .byte_tracker_misc.basetrack import ByteTrackState
 from .byte_tracker_misc.utils.tracklet import STrack
 from .simple_tracker import joint_stracks, sub_stracks, remove_duplicate_stracks
 
@@ -141,7 +142,7 @@ class BYTETracker(NoTracking):
         for itracked, idet in matches:
             track = strack_pool[itracked]
             det = detections[idet]
-            if track.state == TrackState.Tracked:
+            if track.state == ByteTrackState.Tracked:
                 track.update(detections[idet], self.frame_id)
                 activated_starcks.append(track)
             else:
@@ -156,13 +157,13 @@ class BYTETracker(NoTracking):
                                  (tlbr, s, c) in zip(dets_second, scores_second, cls_second)]
         else:
             detections_second = []
-        r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
+        r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == ByteTrackState.Tracked]
         dists = matching.iou_distance(r_tracked_stracks, detections_second)
         matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=0.5)
         for itracked, idet in matches:
             track = r_tracked_stracks[itracked]
             det = detections_second[idet]
-            if track.state == TrackState.Tracked:
+            if track.state == ByteTrackState.Tracked:
                 track.update(det, self.frame_id)
                 activated_starcks.append(track)
             else:
@@ -171,7 +172,7 @@ class BYTETracker(NoTracking):
 
         for it in u_track:
             track = r_tracked_stracks[it]
-            if not track.state == TrackState.Lost:
+            if not track.state == ByteTrackState.Lost:
                 track.mark_lost()
                 lost_stracks.append(track)
 
@@ -204,7 +205,7 @@ class BYTETracker(NoTracking):
 
         # print('Ramained match {} s'.format(t4-t3))
 
-        self.tracked_stracks = [t for t in self.tracked_stracks if t.state == TrackState.Tracked]
+        self.tracked_stracks = [t for t in self.tracked_stracks if t.state == ByteTrackState.Tracked]
         self.tracked_stracks = joint_stracks(self.tracked_stracks, activated_starcks)
         self.tracked_stracks = joint_stracks(self.tracked_stracks, refind_stracks)
         self.lost_stracks = sub_stracks(self.lost_stracks, self.tracked_stracks)

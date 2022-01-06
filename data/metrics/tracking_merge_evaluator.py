@@ -336,7 +336,7 @@ class TrackEval(TrackingEvaluator):
                     continue
 
                 if itype == 'bbox':
-                    tps, fps, _ = self.get_cls_tp_fp(results_i, cur_gt)
+                    tps, fps, matcheds = self.get_cls_tp_fp(results_i, cur_gt)
                 drec = tps / max(1, sum_gt)
                 tp = np.cumsum(tps)
                 fp = np.cumsum(fps)
@@ -354,6 +354,7 @@ class TrackEval(TrackingEvaluator):
                 recalls_at_fppi[class_i] = rec[np.array(indices)]
                 precisions_at_fppi[class_i] = prec[np.array(indices)]
                 tracking_prec[class_i] = self.get_track_prec(results_i, cur_gt)
+                tracking_prec[class_i]['track_prec'] = super().get_track_prec(matcheds)
 
             mAP = np.sum(ap[1:]) / num_mean_cls
 

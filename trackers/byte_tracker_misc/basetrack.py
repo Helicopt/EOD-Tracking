@@ -1,5 +1,6 @@
 import numpy as np
 from collections import OrderedDict
+from eod.utils.env.dist_helper import env
 
 
 class ByteTrackState:
@@ -34,7 +35,10 @@ class BaseTrack(object):
     @staticmethod
     def next_id():
         BaseTrack._count += 1
-        return BaseTrack._count
+        if env.distributed:
+            return BaseTrack._count * env.world_size + env.rank
+        else:
+            return BaseTrack._count
 
     def activate(self, *args):
         raise NotImplementedError
