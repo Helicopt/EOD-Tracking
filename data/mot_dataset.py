@@ -22,6 +22,7 @@ from eod.data.data_utils import get_image_size
 from torch.nn.modules.utils import _pair
 
 from ..utils.read_helper import read_lines
+from ..utils.debug import info_debug
 
 __all__ = ['MultiFrameDataset']
 
@@ -54,7 +55,9 @@ class MultiFrameDataset(CustomDataset):
                  evaluator=None,
                  label_mapping=None,
                  cache=None,
-                 clip_box=True):
+                 clip_box=True,
+                 ignore_vis_under=0.0,
+                 ):
         self.id_cnt = 0
         self.num_ids = num_ids
         self.test_mode = test_mode
@@ -65,6 +68,7 @@ class MultiFrameDataset(CustomDataset):
         self.random_select = random_select
         self.repeat_num = repeat_to
         self.online = online
+        self.ignore_vis_under = ignore_vis_under
         super(MultiFrameDataset, self).__init__(
             meta_file, image_reader, transformer, num_classes,
             evaluator=evaluator, label_mapping=label_mapping, cache=cache, clip_box=clip_box)
@@ -101,6 +105,9 @@ class MultiFrameDataset(CustomDataset):
                     self.id_mapping[seq_name] = {}
                 for instance in data.get('instances', []):
                     track_id = instance.get('track_id', -1)
+                    vis = instance.get('vis_rate', 1.0)
+                    if vis < self.ignore_vis_under:
+                        track_id = -1
                     if track_id >= 0 and track_id not in self.id_mapping[seq_name]:
                         self.id_mapping[seq_name][track_id] = self.next_id
                     instance['track_id'] = self.id_mapping[seq_name].get(track_id, 0)
@@ -177,7 +184,7 @@ class MultiFrameDataset(CustomDataset):
         if len(ig_bboxes) == 0:
             ig_bboxes = self._fake_zero_data(1, 4)
         if len(gt_bboxes) == 0:
-            gt_bboxes = self._fake_zero_data(1, 5)
+            gt_bboxes = self._fake_zero_data(1, 6)
 
         gt_bboxes = torch.as_tensor(gt_bboxes, dtype=torch.float32)
         ig_bboxes = torch.as_tensor(ig_bboxes, dtype=torch.float32)

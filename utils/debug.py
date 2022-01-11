@@ -2,6 +2,7 @@ from collections import deque
 import torch
 
 from eod.utils.general.log_helper import default_logger as logger
+from eod.utils.env.dist_helper import env
 
 
 def info_debug(x, statistics=False, prefix=''):
@@ -77,6 +78,10 @@ def get_debugger(name='root', create_one=False, show_sts=True):
     return debugger_pool[name]
 
 
-def logger_print(*args):
+def logger_print(*args, rk=0):
     text = ' '.join(map(str, args))
-    logger.info(text)
+    if env.rank == rk:
+        if rk == 0:
+            logger.info(text)
+        else:
+            print(text)

@@ -127,8 +127,8 @@ class Tracklet(object):
 class MotionAppearanceOnlineTracker(NoTracking):
 
     def __init__(self, sim_thr=0.4, output_thr=0.5, keep_thr=0.1, interval=30,
-                 pred_det=True, avg_feat=False, reset_id=False, tracklet_cfg=dict(),
-                 use_gt=True, save_feats=True, save_feats_dir='./data/',
+                 pred_det=False, avg_feat=False, reset_id=False, tracklet_cfg=dict(),
+                 use_gt=False, save_feats=False, save_feats_dir='./data/',
                  save_feats_type='pkl', feats_tag='data', save_interval=0, **kwargs):
         super().__init__()
         self.sim_thr = sim_thr
@@ -229,7 +229,10 @@ class MotionAppearanceOnlineTracker(NoTracking):
     def preprocess(self, bboxes, embeds, info):
         raw_bboxes = bboxes
         bboxes = bboxes.clone()
-        embeds = F.normalize(embeds, dim=1)
+        if embeds is not None:
+            embeds = F.normalize(embeds, dim=1)
+        else:
+            embeds = bboxes.new_zeros((bboxes.shape[0], 2))
         scale_h, scale_w = info[2]
         pad_h, pad_w = info[6], info[7]
         bboxes[:, [0, 2]] -= pad_w
@@ -267,7 +270,8 @@ class MotionAppearanceOnlineTracker(NoTracking):
     def prepare_data(self, real_frame, dets, dfeats, bboxes, embeds, tracklets, o_gids=None, gids=None):
         skipped_frs = [(self.fr - trk.last) for trk in tracklets]
         uids = [trk.uid for trk in tracklets]
-        ooids = [trk.gid for trk in tracklets]
+        # if self.use_gt:
+        #     ooids = [trk.gid for trk in tracklets]
         data = {
             'frame': self.fr, 'real_frame': real_frame,
             'right': {
@@ -333,7 +337,8 @@ class MotionAppearanceOnlineTracker(NoTracking):
     def forward(self, state, inputs):
         state.fr += 1
         self.fr = state.fr
-        bboxes, real_bboxes, embeds = self.preprocess(inputs['dt_bboxes'], inputs['id_embeds'], inputs['image_info'])
+        bboxes, real_bboxes, embeds = self.preprocess(
+            inputs['dt_bboxes'], inputs.get('id_embeds', None), inputs['image_info'])
         seq, real_frame, gt = self.get_gt(inputs['image_id'])
         self.device = bboxes.device
         keep = bboxes[:, 4] > self.keep_thr

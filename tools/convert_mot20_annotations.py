@@ -45,6 +45,7 @@ def convert_annos(seqs, split, half=False, gap=30):
                         'bbox': [gtdet.x1, gtdet.y1, gtdet.x2, gtdet.y2],
                         'label': 1,
                         'track_id': gtdet.uid,
+                        'vis_rate': gtdet.conf,
                     }
                     instances.append(one)
             data = {
