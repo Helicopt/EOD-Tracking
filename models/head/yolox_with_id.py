@@ -1,6 +1,7 @@
 import copy
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import math
 
 from eod.utils.model import accuracy as A  # noqa F401
@@ -14,6 +15,7 @@ from eod.utils.model.normalize import build_norm_layer
 from eod.utils.model.act_fn import build_act_fn
 
 from ..mot_module_wrapper import DualModuleWrapper
+from ...utils.debug import info_debug
 
 
 __all__ = ['YoloXHeadwID', 'YoloXHeadwIDLessShare', 'YoloXHeadwIDShare']
@@ -33,6 +35,8 @@ class YoloXHeadwID(nn.Module):
                  initializer=None,
                  class_activation='sigmoid',
                  normalize={'type': 'solo_bn'},
+                 fuse_lvls_for_id=False,
+                 fuse_mode='nearest',
                  init_prior=0.01):
         super(YoloXHeadwID, self).__init__()
         self.prefix = self.__class__.__name__
@@ -40,16 +44,42 @@ class YoloXHeadwID(nn.Module):
         self.num_point = num_point
         class_channel = {'sigmoid': -1, 'softmax': 0}[class_activation] + num_classes
         self.class_channel = class_channel
+        self.fuse_id_lvls = fuse_lvls_for_id
+        self.fuse_mode = fuse_mode
 
         self.cls_convs = nn.ModuleList()
         self.reg_convs = nn.ModuleList()
-        self.id_convs = nn.ModuleList()
         self.cls_preds = nn.ModuleList()
         self.reg_preds = nn.ModuleList()
         self.obj_preds = nn.ModuleList()
         self.id_preds = nn.ModuleList()
         self.stems = nn.ModuleList()
         Conv = DWConv if depthwise else ConvBnAct
+        if self.fuse_id_lvls:
+            outplane = int(outplanes * width)
+            self.id_convs = nn.Sequential(
+                *[
+                    Conv(
+                        outplane * self.num_levels,
+                        outplane,
+                        kernel_size=3,
+                        stride=1,
+                        act_fn=act_fn,
+                        normalize=normalize
+                    ),
+                    Conv(
+                        outplane,
+                        outplane,
+                        kernel_size=3,
+                        stride=1,
+                        act_fn=act_fn,
+                        normalize=normalize
+                    ),
+                ]
+            )
+
+        else:
+            self.id_convs = nn.ModuleList()
 
         self.out_planes = []
         for i in range(self.num_levels):
@@ -110,28 +140,29 @@ class YoloXHeadwID(nn.Module):
                     ]
                 )
             )
-            self.id_convs.append(
-                nn.Sequential(
-                    *[
-                        Conv(
-                            outplane,
-                            outplane,
-                            kernel_size=3,
-                            stride=1,
-                            act_fn=act_fn,
-                            normalize=normalize
-                        ),
-                        Conv(
-                            outplane,
-                            outplane,
-                            kernel_size=3,
-                            stride=1,
-                            act_fn=act_fn,
-                            normalize=normalize
-                        ),
-                    ]
+            if not self.fuse_id_lvls:
+                self.id_convs.append(
+                    nn.Sequential(
+                        *[
+                            Conv(
+                                outplane,
+                                outplane,
+                                kernel_size=3,
+                                stride=1,
+                                act_fn=act_fn,
+                                normalize=normalize
+                            ),
+                            Conv(
+                                outplane,
+                                outplane,
+                                kernel_size=3,
+                                stride=1,
+                                act_fn=act_fn,
+                                normalize=normalize
+                            ),
+                        ]
+                    )
                 )
-            )
             self.cls_preds.append(
                 nn.Conv2d(
                     in_channels=outplane,
@@ -171,20 +202,50 @@ class YoloXHeadwID(nn.Module):
             initialize_from_cfg(self, initializer)
         self.initialize_biases(init_prior)
 
+    def fuse_features(self, features):
+        ret = []
+        for lvl_i, feature in enumerate(features):
+            target_shape = feature.shape[-2:]
+            fused = []
+            for lvl_j, other in enumerate(features):
+                if lvl_i != lvl_j:
+                    fused.append(F.interpolate(other, size=target_shape, mode=self.fuse_mode))
+                else:
+                    fused.append(feature)
+            fused = torch.cat(fused, dim=1)
+            ret.append(fused)
+        return ret
+
     def forward_net(self, features, idx=0):
         mlvl_preds = []
         mlvl_roi_features = []
+        stems = []
         for i in range(self.num_levels):
             feat = self.stems[i](features[i])
+            stems.append(feat)
             cls_feat = self.cls_convs[i](feat)
             loc_feat = self.reg_convs[i](feat)
-            id_feat = self.id_convs[i](feat)
+            if not self.fuse_id_lvls:
+                id_feat = self.id_convs[i](feat)
+                id_pred = self.id_preds(id_feat)
+            else:
+                id_feat = None
+                id_pred = None
             cls_pred = self.cls_preds[i](cls_feat)
             loc_pred = self.reg_preds[i](loc_feat)
-            id_pred = self.id_preds(id_feat)
             obj_pred = self.obj_preds[i](loc_feat)
-            mlvl_preds.append((cls_pred, loc_pred, id_pred, obj_pred))
-            mlvl_roi_features.append((cls_feat, loc_feat, id_feat))
+            mlvl_preds.append([cls_pred, loc_pred, id_pred, obj_pred])
+            mlvl_roi_features.append([cls_feat, loc_feat, id_feat])
+        if self.fuse_id_lvls:
+            id_feats = self.fuse_features(stems)
+            for i in range(self.num_levels):
+                id_feat = self.id_convs(id_feats[i])
+                id_pred = self.id_preds(id_feat)
+                mlvl_roi_features[i][2] = id_feat
+                mlvl_preds[i][2] = id_pred
+                mlvl_roi_features[i] = tuple(mlvl_roi_features[i])
+                mlvl_preds[i] = tuple(mlvl_preds[i])
+
         return mlvl_preds, mlvl_roi_features
 
     def initialize_biases(self, prior_prob):
