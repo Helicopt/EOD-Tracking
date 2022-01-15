@@ -21,6 +21,25 @@ from ...utils.debug import info_debug
 __all__ = ['YoloXHeadwID', 'YoloXHeadwIDLessShare', 'YoloXHeadwIDShare']
 
 
+class SE_Block(nn.Module):
+    "credits: https://github.com/moskomule/senet.pytorch/blob/master/senet/se_module.py#L4"
+
+    def __init__(self, c, r=16):
+        super().__init__()
+        self.excitation = nn.Sequential(
+            nn.Linear(c, c // r, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(c // r, c, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        bs, c, h, w = x.shape
+        x_ = x.permute(0, 2, 3, 1)
+        y = self.excitation(x_).permute(0, 3, 1, 2)
+        return x * y
+
+
 @MODULE_ZOO_REGISTRY.register('YoloXHeadwID')
 class YoloXHeadwID(nn.Module):
     def __init__(self,
@@ -37,6 +56,7 @@ class YoloXHeadwID(nn.Module):
                  normalize={'type': 'solo_bn'},
                  fuse_lvls_for_id=False,
                  fuse_mode='nearest',
+                 se_block=0,
                  init_prior=0.01):
         super(YoloXHeadwID, self).__init__()
         self.prefix = self.__class__.__name__
@@ -197,7 +217,9 @@ class YoloXHeadwID(nn.Module):
             stride=1,
             padding=0,
         )
-
+        self.se_block = se_block
+        if self.se_block > 0:
+            self.id_se = SE_Block(outplane, self.se_block)
         if initializer is not None:
             initialize_from_cfg(self, initializer)
         self.initialize_biases(init_prior)
@@ -227,6 +249,8 @@ class YoloXHeadwID(nn.Module):
             loc_feat = self.reg_convs[i](feat)
             if not self.fuse_id_lvls:
                 id_feat = self.id_convs[i](feat)
+                if self.se_block > 0:
+                    id_feat = self.id_se(id_feat)
                 id_pred = self.id_preds(id_feat)
             else:
                 id_feat = None
@@ -240,6 +264,8 @@ class YoloXHeadwID(nn.Module):
             id_feats = self.fuse_features(stems)
             for i in range(self.num_levels):
                 id_feat = self.id_convs(id_feats[i])
+                if self.se_block > 0:
+                    id_feat = self.id_se(id_feat)
                 id_pred = self.id_preds(id_feat)
                 mlvl_roi_features[i][2] = id_feat
                 mlvl_preds[i][2] = id_pred
