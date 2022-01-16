@@ -13,6 +13,7 @@ from ...utils.debug import info_debug
 __all__ = ['DistillKL', 'MSELoss']
 
 
+@to_float32
 def kl_loss(y_s, y_t, T=3, scale_type='linear', reduction='none', normalizer=None):
     """Distilling the Knowledge in a Neural Network"""
     if y_s.shape[1] == 1:
