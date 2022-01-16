@@ -9,6 +9,8 @@ from eod.utils.env.gene_env import to_device
 from eod.utils.general.log_helper import default_logger as logger
 from eod.utils.general.registry_factory import MODEL_HELPER_REGISTRY, MODULE_ZOO_REGISTRY
 from eod.utils.env.dist_helper import barrier, all_gather, env
+from eod.utils.general.yaml_loader import load_yaml
+from eod.utils.general.saver_helper import Saver
 
 from eod.runner.base_runner import BaseRunner
 
@@ -81,12 +83,72 @@ class MOTFP16Runner(BaseRunner):
     def build(self):
         super().build()
         self.build_trackers(self.config.get('tracker', None))
+        self.build_teacher(self.config.get('teacher', None))
 
     def build_trackers(self, cfg):
         if cfg is not None:
             self.tracker = MODULE_ZOO_REGISTRY[cfg['type']](**cfg['kwargs'])
         else:
             self.tracker = None
+
+    def build_teacher(self, cfg):
+        if cfg is not None:
+            cfg_path = cfg['cfg']
+            ckpt_path = cfg['ckpt']
+            kd_cfg = cfg['kd_module']
+            logger.info(('loading teacher config from %s' % cfg_path))
+            config = load_yaml(cfg_path)
+            model_helper_type = config['runtime']['model_helper']['type']
+            model_helper_kwargs = config['runtime']['model_helper']['kwargs']
+            model_helper_ins = MODEL_HELPER_REGISTRY[model_helper_type]
+            self.model_teacher = model_helper_ins(config['net'], **model_helper_kwargs)
+            if self.device == 'cuda':
+                self.model_teacher = self.model_teacher.cuda()
+            if config['runtime']['special_bn_init']:
+                for m in self.model_teacher.modules():
+                    if isinstance(m, torch.nn.BatchNorm2d) or isinstance(m, torch.nn.SyncBatchNorm):
+                        m.eps = 1e-3
+                        m.momentum = 0.03
+            if self.fp16 and self.backend == 'linklink':
+                self.model_teacher = self.model_teacher.half()
+            logger.info(('loading teacher ckpt from %s' % ckpt_path))
+            state_dict = Saver.load_checkpoint(ckpt_path)
+            self.model_teacher.load(state_dict['model'])
+            self.model_teacher.eval()
+            self.kd_module = MODULE_ZOO_REGISTRY.build(kd_cfg)
+        else:
+            self.model_teacher = None
+
+    def forward(self, batch, return_output=False):
+        output_teacher = None
+        batch_cp = dict(batch)
+        if 'main' in batch:
+            batch_cp['main'] = dict(batch_cp['main'])
+        if 'ref' in batch:
+            batch_cp['ref'] = list(batch_cp['ref'])
+            for i in range(len(batch_cp['ref'])):
+                batch_cp['ref'][i] = dict(batch_cp['ref'][i])
+        if self.backend == 'dist' and self.fp16:
+            with torch.cuda.amp.autocast(enabled=True):
+                output = self.forward_model(batch)
+                if self.model_teacher is not None:
+                    with torch.no_grad():
+                        output_teacher = self.model_teacher(batch_cp)
+        else:
+            output = self.forward_model(batch)
+            if self.model_teacher is not None:
+                with torch.no_grad():
+                    output_teacher = self.model_teacher(batch_cp)
+        if output_teacher is not None:
+            losses_kd = self.kd_module(output, output_teacher)
+            output.update(losses_kd)
+        self._temporaries['last_output'] = output
+        losses = [val for name, val in output.items() if name.find('loss') >= 0]
+        loss = sum(losses)
+        if return_output:
+            return loss, output
+        else:
+            return loss
 
     def forward_eval(self, batch):
         self._hooks('before_eval_forward', self.local_eval_iter(), batch)

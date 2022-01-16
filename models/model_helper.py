@@ -30,8 +30,8 @@ class MOTModelHelper(ModelHelper):
             In Mimic task, input may be fed into teacher & student networks respectivly,
             inplace update may cause the input dict only keep the last forward results, which is unexpected.
         """
+        input = copy.copy(input)
         if not self.quant:
-            input = copy.copy(input)
             if input['main']['image'].device != self.device or input['main']['image'].dtype != self.dtype:
                 input = to_device(input, device=self.device, dtype=self.dtype)
         for submodule in self.children():

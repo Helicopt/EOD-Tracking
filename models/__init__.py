@@ -4,3 +4,5 @@ from .model_helper import *  # noqa
 from .head import *  # noqa
 from .postprocess import *  # noqa
 from .relation import *  # noqa
+from .knowledge_distillation import *  # noqa
+from .losses import *  # noqa

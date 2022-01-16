@@ -9,6 +9,7 @@ from eod.utils.model.initializer import initialize_from_cfg
 from eod.utils.general.registry_factory import MODULE_ZOO_REGISTRY
 
 from eod.tasks.det.plugins.yolox.models.backbone.cspdarknet import DWConv
+from eod.tasks.det.plugins.yolox.models.head import YoloXHead
 
 from eod.tasks.det.plugins.yolov5.models.components import ConvBnAct
 from eod.utils.model.normalize import build_norm_layer
@@ -38,6 +39,32 @@ class SE_Block(nn.Module):
         x_ = x.permute(0, 2, 3, 1)
         y = self.excitation(x_).permute(0, 3, 1, 2)
         return x * y
+
+
+@MODULE_ZOO_REGISTRY.register('YoloXHeadwFeat')
+class YoloXHeadwFeat(YoloXHead):
+
+    def forward_net(self, features, idx=0):
+        mlvl_preds = []
+        mlvl_feats = []
+        for i in range(self.num_levels):
+            feat = self.stems[i](features[i])
+            cls_feat = self.cls_convs[i](feat)
+            loc_feat = self.reg_convs[i](feat)
+            cls_pred = self.cls_preds[i](cls_feat)
+            loc_pred = self.reg_preds[i](loc_feat)
+            obj_pred = self.obj_preds[i](loc_feat)
+            mlvl_preds.append((cls_pred, loc_pred, obj_pred))
+            mlvl_feats.append((cls_feat, loc_feat))
+        return mlvl_preds, mlvl_feats
+
+    def forward(self, input):
+        features = input['features']
+        mlvl_raw_preds, mlvl_roi_features = self.forward_net(features)
+        output = {}
+        output['preds'] = mlvl_raw_preds
+        output['roi_features'] = mlvl_roi_features
+        return output
 
 
 @MODULE_ZOO_REGISTRY.register('YoloXHeadwID')
