@@ -36,7 +36,6 @@ def kl_loss(y_s, y_t, T=3, scale_type='linear', reduction='none', normalizer=Non
 
 @to_float32
 def mse_loss(x, y, scale_type='linear', reduction='none', normalizer=None):
-    print(x.shape, y.shape)
     loss = F.mse_loss(x, y, reduction='none')
     loss = _reduce(loss, reduction=reduction, normalizer=normalizer)
     return loss
