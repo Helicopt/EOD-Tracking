@@ -155,7 +155,8 @@ class MultiFrameDataset(CustomDataset):
         #     self._set_group_flag()
         # processing pipeline
         # self.pipeline = Compose(pipeline)
-        assert self.num_ids is None or self.id_cnt < self.num_ids, 'num_ids in config is less than actual id_cnt loaded'
+        if not self.test_mode:
+            assert self.num_ids is None or self.id_cnt < self.num_ids, 'num_ids in config is less than actual id_cnt loaded'
         logger.info('---- %d items in total, %d IDs' % (len(self.metas), self.id_cnt))
 
     def get_input(self, idx):
@@ -275,12 +276,15 @@ class MultiFrameDataset(CustomDataset):
         chosen = list(chosen)
         # print(seq_name, frame_id, chosen)
 
-        if self.noaug_ratio < 1e-12:
+        if len(options) < 2:
             noaug_flag = False
-        elif self.noaug_ratio > 1 - 1e-12:
-            noaug_flag = True
         else:
-            noaug_flag = np.random.rand() < self.noaug_ratio
+            if self.noaug_ratio < 1e-12:
+                noaug_flag = False
+            elif self.noaug_ratio > 1 - 1e-12:
+                noaug_flag = True
+            else:
+                noaug_flag = np.random.rand() < self.noaug_ratio
 
         input_main = self.get_input_by_seq_frame(seq_name, frame_id, idx)
         input_main = self.prepare_input(input_main, noaug_flag=noaug_flag)
