@@ -27,8 +27,8 @@ def convert_annos(anno, split):
                 if gtdet['tag'] != 'person' or ignore:
                     continue
                 x1, y1, w, h = gtdet['fbox']
-                x2 = x1 + w / 2.
-                y2 = y1 + h / 2.
+                x2 = x1 + w
+                y2 = y1 + h
                 uid = i + 1
                 one = {
                     'is_ignored': False,
