@@ -1,6 +1,7 @@
 # Standard Library
 import json
 import copy
+import os
 from collections import Counter, OrderedDict
 
 # Import from third library
@@ -27,6 +28,7 @@ class TrackingEvaluator(CustomEvaluator):
                  gt_file,
                  num_classes,
                  iou_thresh,
+                 formatter='{root}/{seq}/img1/{fr}.{ext}',
                  class_names=None,
                  fppi=np.array([0.1, 0.5, 1]),
                  metrics_csv='metrics.csv',
@@ -43,7 +45,7 @@ class TrackingEvaluator(CustomEvaluator):
                                                 label_mapping=label_mapping,
                                                 ignore_mode=ignore_mode,
                                                 ign_iou_thresh=ign_iou_thresh)
-
+        self.formatter = formatter
         if len(eval_class_idxs) == 0:
             eval_class_idxs = list(range(1, num_classes))
         self.eval_class_idxs = eval_class_idxs
@@ -54,6 +56,18 @@ class TrackingEvaluator(CustomEvaluator):
         if self.class_names is None:
             self.class_names = eval_class_idxs
         self.iou_types = iou_types
+        self._idcnt = 0
+        self._idmapping = {}
+
+    def next_id(self, seq_name, uid):
+        if seq_name not in self._idmapping:
+            self._idmapping[seq_name] = {}
+        if uid < 0:
+            return uid
+        if uid not in self._idmapping[seq_name]:
+            self._idcnt += 1
+            self._idmapping[seq_name][uid] = self._idcnt
+        return self._idmapping[seq_name][uid]
 
     def load_gts(self, gt_files):
         # maintain a dict to store original img information
@@ -72,8 +86,8 @@ class TrackingEvaluator(CustomEvaluator):
             for img in read_lines(gt_file):
                 if self.label_mapping is not None:
                     img = self.set_label_mapping(img, gt_file_idx)
-                image_id = img['filename']
-                original_gt[img['filename']] = copy.deepcopy(img)
+                image_id = img.get('virtual_filename', img['filename'])
+                original_gt[image_id] = copy.deepcopy(img)
                 gt_img_ids.add(image_id)
                 gts['image_num'] += 1
                 for idx, instance in enumerate(img.get('instances', [])):
@@ -208,6 +222,16 @@ class TrackingEvaluator(CustomEvaluator):
             table.add_row(list(row))
         logger.info('\n{}'.format(table))
 
+    def get_cur_dts(self, dts_cls, gts_img_id_set):
+        """ Only the detecton results of images on which class c is annotated are kept.
+        This is necessary for federated datasets evaluation
+        """
+        cur_gt_dts = []
+        for _, dt in enumerate(dts_cls):
+            if dt['vimage_id'] in gts_img_id_set:
+                cur_gt_dts.append(dt)
+        return cur_gt_dts
+
     def get_cls_tp_fp(self, dts_cls, gts_cls):
         """
         Arguments:
@@ -217,7 +241,8 @@ class TrackingEvaluator(CustomEvaluator):
         fps, tps = np.zeros((len(dts_cls))), np.zeros((len(dts_cls)))
         matcheds = []
         for i, dt in enumerate(dts_cls):
-            img_id = dt['image_id']
+            img_id = dt['vimage_id']
+            seq_name, frame_id = self.parse_seq_info(img_id)
             dt_bbox = dt['bbox']
             m_iou, m_gt, m_iof = -1, -1, -1
             if img_id in gts_cls:
@@ -232,7 +257,8 @@ class TrackingEvaluator(CustomEvaluator):
                     fps[i] = 0
                     gts['gts'][m_gt]['detected'] = True
                     gts['gts'][m_gt]['detected_score'] = dt['score']
-                    matcheds.append((dt['track_id'], gts['gts'][m_gt]['track_id']))
+                    gid = self.next_id(seq_name, gts['gts'][m_gt]['track_id'])
+                    matcheds.append((dt['track_id'], gid))
                 else:
                     fps[i] = 1
                     tps[i] = 0
@@ -257,6 +283,19 @@ class TrackingEvaluator(CustomEvaluator):
                 tps[i] = 0
 
         return np.array(tps), np.array(fps), matcheds
+
+    def parse_seq_info(self, filename):
+        formatter = self.formatter
+        if formatter == '{root}/{seq}/img1/{fr}.{ext}':
+            frame_id = int(os.path.splitext(os.path.basename(filename))[0])
+            seq_name = os.path.basename(os.path.dirname(os.path.dirname(filename)))
+        elif formatter == '{root}/{seq}/{fr}.{ext}':
+            frame_id = int(os.path.splitext(os.path.basename(filename))[0])
+            seq_name = os.path.basename(os.path.dirname(filename))
+        else:
+            seq_name = os.path.splitext(os.path.basename(filename))[0]
+            frame_id = 0
+        return seq_name, frame_id
 
     def get_track_prec(self, matchings):
         gt_rec = {}

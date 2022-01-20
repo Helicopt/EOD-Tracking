@@ -19,7 +19,7 @@ def extract(src, dest=None):
         detdict = json.loads(row)
         x1, y1, x2, y2 = detdict['bbox']
         uid = detdict['track_id']
-        image_id = detdict['image_id']
+        image_id = detdict['vimage_id']
         seq, fr = parse(image_id)
         if seq not in cache:
             cache[seq] = TrackSet()
@@ -34,7 +34,7 @@ def extract(src, dest=None):
             nfr = fr - ts.min_fr + 1
             for d in ts[fr]:
                 d = d.copy()
-                d.fr = nfr
+                # d.fr = nfr
                 nts.append_data(d)
         with open(os.path.join(dest, '%s.txt' % seq), 'w') as fd:
             nts.dump(fd)

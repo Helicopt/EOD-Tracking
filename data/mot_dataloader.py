@@ -63,6 +63,7 @@ class MOTDataLoader(BaseDataLoader):
         image_info = [_['image_info'] for _ in batch]
         filenames = [_['filename'] for _ in batch]
         image_ids = [_['image_id'] for _ in batch]
+        vimage_ids = [_['vimage_id'] for _ in batch]
         flipped = [_['flipped'] for _ in batch]
         neg_targets = [_.get('neg_target', 0) for _ in batch]
         image_sources = [_.get('image_source', 0) for _ in batch]
@@ -75,6 +76,7 @@ class MOTDataLoader(BaseDataLoader):
             'image': images,
             'image_info': image_info,
             'image_id': image_ids,
+            'vimage_id': vimage_ids,
             'filenames': filenames,
             'flipped': flipped,
             'neg_targets': neg_targets,

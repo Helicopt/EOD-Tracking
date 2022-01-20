@@ -6,6 +6,7 @@ import sys
 import pandas as pd
 import time
 from collections import Counter, OrderedDict
+import tempfile
 
 from eod.utils.general.log_helper import default_logger as logger
 from eod.utils.general.yaml_loader import IncludeLoader
@@ -32,33 +33,23 @@ class TrackEval(TrackingEvaluator):
                  gt_file,
                  num_classes,
                  iou_thresh,
-                 class_names=None,
-                 fppi=np.array([0.1, 0.5, 1]),
-                 metrics_csv='metrics.csv',
-                 label_mapping=None,
-                 ignore_mode=0,
-                 ign_iou_thresh=0.5,
-                 iou_types=['bbox'],
-                 eval_class_idxs=[],
+                 write_path='data/eval_result',
+                 tracker_name='trk',
                  track_eval=_default_trackeval_cfg,
-                 formatter='{root}/{seq}/img1/{fr}.{ext}',
+                 fast_eval=False,
+                 group_by=None,
                  **kwargs):
         assert trackeval is not None, 'trackeval module not found. please install before using this evaluator'
         super(TrackEval, self).__init__(
             gt_file,
             num_classes,
             iou_thresh,
-            class_names=class_names,
-            fppi=fppi,
-            metrics_csv=metrics_csv,
-            label_mapping=label_mapping,
-            ignore_mode=ignore_mode,
-            ign_iou_thresh=ign_iou_thresh,
-            iou_types=iou_types,
-            eval_class_idxs=eval_class_idxs)
-
-        self.formatter = formatter
-        self.build_trackeval_evaluator(track_eval)
+            **kwargs)
+        self.tracker_name = tracker_name
+        self.write_path = write_path
+        self.track_eval_cfg = track_eval
+        self.fast_eval = fast_eval
+        self.group_by = group_by
 
     def build_trackeval_evaluator(self, _cfg):
         def update_value(_cfg, out_cfg):
@@ -107,13 +98,12 @@ class TrackEval(TrackingEvaluator):
         }
         return default_config
 
-    @staticmethod
-    def get_default_track_eval_dataset_config():
+    def get_default_track_eval_dataset_config(self):
         """Default class config values"""
         code_path = os.path.abspath('.')
         default_config = {
-            'GT_FOLDER': os.path.join(code_path, 'data/eval_result/gt/'),  # Location of GT data
-            'TRACKERS_FOLDER': os.path.join(code_path, 'data/eval_result/trackers/'),  # Trackers location
+            'GT_FOLDER': os.path.join(code_path, self.write_path, 'gt'),  # Location of GT data
+            'TRACKERS_FOLDER': os.path.join(code_path, self.write_path, 'trackers'),  # Trackers location
             'OUTPUT_FOLDER': None,  # Where to save eval results (if None, same as TRACKERS_FOLDER)
             'TRACKERS_TO_EVAL': None,  # Filenames of trackers to eval (if None, all in folder)
             'CLASSES_TO_EVAL': ['pedestrian'],  # Valid: ['pedestrian']
@@ -135,27 +125,19 @@ class TrackEval(TrackingEvaluator):
         }
         return default_config
 
-    def parse_seq_info(self, filename):
-        if self.formatter == '{root}/{seq}/img1/{fr}.{ext}':
-            frame_id = int(os.path.splitext(os.path.basename(filename))[0])
-            seq_name = os.path.basename(os.path.dirname(os.path.dirname(filename)))
-        else:
-            seq_name = os.path.splitext(os.path.basename(filename))[0]
-            frame_id = 0
-        return seq_name, frame_id
-
     def get_track_prec(self, dt, gt):
         # 'dump_result', gt & dt
         # process gt
-        write_path = 'data/eval_result'
+        write_path = self.write_path
         os.makedirs(write_path, exist_ok=True)
 
         gt_write_path = os.path.join(write_path, 'gt')
         os.makedirs(gt_write_path, exist_ok=True)
         gt_writer = {}
         seq_list_path = os.path.join(gt_write_path, 'list.txt')
-        gt_writer['seqmaps'] = open(seq_list_path, 'w')
-        gt_writer['seqmaps'].writelines('name\n')
+        seqmaps_writer = open(seq_list_path, 'w')
+        seqmaps_writer.writelines('name\n')
+        seq_name_list = []
         gt_sequence_names = set()
         for filename, targets in gt.items():
             seq_name, frame_id = self.parse_seq_info(filename)
@@ -163,7 +145,8 @@ class TrackEval(TrackingEvaluator):
             os.makedirs(seq_path, exist_ok=True)
             if seq_name not in gt_writer:
                 gt_writer[seq_name] = open(os.path.join(seq_path, f'gt.txt'), 'w')
-                gt_writer['seqmaps'].writelines(f'{seq_name}\n')
+                seqmaps_writer.writelines(f'{seq_name}\n')
+                seq_name_list.append(seq_name)
                 gt_sequence_names.add(seq_name)
                 try:
                     config = configparser.ConfigParser()
@@ -190,11 +173,11 @@ class TrackEval(TrackingEvaluator):
                 gt_writer[seq_name].writelines(target_line)
         for f in gt_writer:
             gt_writer[f].close()
+        seqmaps_writer.close()
 
         # process dt
-        tracker_name = 'trk-' + time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
-        logger.info('tracker_name: {}'.format(tracker_name))
-        dt_write_path = os.path.join(write_path, 'trackers', tracker_name)
+        logger.info('tracker_name: {}'.format(self.tracker_name))
+        dt_write_path = os.path.join(write_path, 'trackers', self.tracker_name)
         os.makedirs(dt_write_path, exist_ok=True)
         dt_writer = {}
 
@@ -204,7 +187,7 @@ class TrackEval(TrackingEvaluator):
             dt_writer[seq_name] = open(os.path.join(dt_write_path, f'{seq_name}.txt'), 'w')
 
         for target in dt:
-            filename = target['image_id']
+            filename = target['vimage_id']
             seq_name, frame_id = self.parse_seq_info(filename)
             if seq_name not in dt_writer:
                 logger.info('seq_name: {}'.format(seq_name))
@@ -216,23 +199,77 @@ class TrackEval(TrackingEvaluator):
         for f in dt_writer:
             dt_writer[f].close()
 
-        self.trackeval_dataset_config['SEQMAP_FILE'] = seq_list_path
-        self.trackeval_dataset_config['TRACKERS_TO_EVAL'] = [tracker_name]
-        track_eval_dataset_list = [trackeval.datasets.MotChallenge2DBox(self.trackeval_dataset_config)]
+        self.trackeval_dataset_config['TRACKERS_TO_EVAL'] = [self.tracker_name]
 
-        output_res, output_msg = self.trackeval_evaluator.evaluate(track_eval_dataset_list, self.trackeval_metrics_list)
+        if self.group_by is None or not isinstance(self.group_by, (list, tuple)) or not self.group_by:
 
-        res = output_res['MotChallenge2DBox'][tracker_name]['COMBINED_SEQ']['pedestrian']
+            self.trackeval_dataset_config['SEQMAP_FILE'] = seq_list_path
+            track_eval_dataset_list = [trackeval.datasets.MotChallenge2DBox(self.trackeval_dataset_config)]
 
-        metric = {}
-        for item in self.trackeval_metric_config['METRICS']:
-            if item not in res:
-                continue
-            if item == 'HOTA':
-                metric['HOTA(0)'] = res[item]['HOTA(0)']
-            else:
-                metric.update(res[item])
-        return metric
+            output_res, output_msg = self.trackeval_evaluator.evaluate(
+                track_eval_dataset_list, self.trackeval_metrics_list)
+
+            res = output_res['MotChallenge2DBox'][self.tracker_name]['COMBINED_SEQ']['pedestrian']
+
+            metric = {}
+            for item in self.trackeval_metric_config['METRICS']:
+                if item not in res:
+                    continue
+                if item == 'HOTA':
+                    metric['HOTA(0)'] = res[item]['HOTA(0)']
+                else:
+                    metric.update(res[item])
+            return metric
+        else:
+            metric = {}
+            for i, rep in enumerate(self.group_by):
+                sub_list = []
+                for seq_name_i in seq_name_list:
+                    if seq_name_i.startswith(rep):
+                        sub_list.append(seq_name_i)
+                if sub_list:
+                    sub_list_path = os.path.join(gt_write_path, 'list_sub%d.txt' % i)
+                    with open(sub_list_path, 'w') as fd:
+                        fd.write('name\n')
+                        for one in sub_list:
+                            fd.write('%s\n' % one)
+                self.trackeval_dataset_config['SEQMAP_FILE'] = sub_list_path
+                track_eval_dataset_list = [trackeval.datasets.MotChallenge2DBox(self.trackeval_dataset_config)]
+
+                output_res, output_msg = self.trackeval_evaluator.evaluate(
+                    track_eval_dataset_list, self.trackeval_metrics_list)
+
+                res = output_res['MotChallenge2DBox'][self.tracker_name]['COMBINED_SEQ']['pedestrian']
+                for item in self.trackeval_metric_config['METRICS']:
+                    if item not in res:
+                        continue
+                    if item == 'HOTA':
+                        metric['HOTA(0)@%s' % rep] = res[item]['HOTA(0)']
+                    else:
+                        for k in res[item]:
+                            metric['%s@%s' % (k, rep)] = res[item][k]
+            metric['HOTA(0)'] = metric['HOTA(0)@%s' % self.group_by[0]]
+            return metric
+
+    def export_fast(self, output, tracking_prec):
+
+        fg_class_names = self.class_names
+        if self.num_classes == len(self.class_names):
+            fg_class_names = fg_class_names[1:]
+
+        assert len(fg_class_names) == self.num_classes - 1
+
+        csv_metrics = OrderedDict()
+        csv_metrics['Class'] = fg_class_names
+        for item in tracking_prec[1].keys():
+            csv_metrics[item] = [cls_res[item] for cls_res in tracking_prec[1:]]
+
+        csv_metrics['Class'].append('Mean')
+        for item in tracking_prec[1].keys():
+            csv_metrics[item].append(np.mean([cls_res[item] for cls_res in tracking_prec[1:]], axis=0).tolist())
+        csv_metrics_table = pd.DataFrame(csv_metrics)
+        csv_metrics_table.to_csv(output, index=False, float_format='%.4f')
+        return output, csv_metrics_table, csv_metrics
 
     def export(self, output, ap, max_recall, fppi_miss, fppi_scores,
                recalls_at_fppi, precisions_at_fppi, tracking_prec):
@@ -297,6 +334,10 @@ class TrackEval(TrackingEvaluator):
         return output, csv_metrics_table, csv_metrics
 
     def eval(self, res_file, res=None):
+        tracker_name = self.tracker_name + '-' + time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
+        self.write_path = tempfile.mkdtemp(prefix=tracker_name, suffix='trackeval', dir=self.write_path)
+        self.build_trackeval_evaluator(self.track_eval_cfg)
+
         metric_res = Metric({})
         for itype in self.iou_types:
             num_mean_cls = 0
@@ -335,34 +376,39 @@ class TrackEval(TrackingEvaluator):
                     # max_recall[class_i] = 0.0
                     continue
 
-                if itype == 'bbox':
+                if itype == 'bbox' and not self.fast_eval:
                     tps, fps, matcheds = self.get_cls_tp_fp(results_i, cur_gt)
-                drec = tps / max(1, sum_gt)
-                tp = np.cumsum(tps)
-                fp = np.cumsum(fps)
-                rec = tp / sum_gt
-                prec = tp / np.maximum(tp + fp, 1)
-                for v in range(len(prec) - 2, -1, -1):
-                    prec[v] = max(prec[v], prec[v + 1])
-                scores = [x['score'] for x in results_i]
-                image_num = len(gts_img_id_set)
-                mrs, s_fppi, indices = self.get_miss_rate(tp, fp, scores, image_num, sum_gt, return_index=True)
-                ap[class_i] = np.sum(drec * prec)
-                max_recall[class_i] = np.max(rec)
-                fppi_miss[class_i] = mrs
-                fppi_scores[class_i] = s_fppi
-                recalls_at_fppi[class_i] = rec[np.array(indices)]
-                precisions_at_fppi[class_i] = prec[np.array(indices)]
-                tracking_prec[class_i] = self.get_track_prec(results_i, cur_gt)
-                tracking_prec[class_i]['track_prec'] = super().get_track_prec(matcheds)
 
-            mAP = np.sum(ap[1:]) / num_mean_cls
+                    drec = tps / max(1, sum_gt)
+                    tp = np.cumsum(tps)
+                    fp = np.cumsum(fps)
+                    rec = tp / sum_gt
+                    prec = tp / np.maximum(tp + fp, 1)
+                    for v in range(len(prec) - 2, -1, -1):
+                        prec[v] = max(prec[v], prec[v + 1])
+                    scores = [x['score'] for x in results_i]
+                    image_num = len(gts_img_id_set)
+                    mrs, s_fppi, indices = self.get_miss_rate(tp, fp, scores, image_num, sum_gt, return_index=True)
+                    ap[class_i] = np.sum(drec * prec)
+                    max_recall[class_i] = np.max(rec)
+                    fppi_miss[class_i] = mrs
+                    fppi_scores[class_i] = s_fppi
+                    recalls_at_fppi[class_i] = rec[np.array(indices)]
+                    precisions_at_fppi[class_i] = prec[np.array(indices)]
+                    tracking_prec[class_i]['track_prec'] = super().get_track_prec(matcheds)
+                tracking_prec[class_i].update(self.get_track_prec(results_i, cur_gt))
 
-            _, metric_table, csv_metrics = self.export(
-                self.metrics_csv, ap, max_recall, fppi_miss, fppi_scores, recalls_at_fppi, precisions_at_fppi, tracking_prec)
+            if not self.fast_eval:
+                mAP = np.sum(ap[1:]) / num_mean_cls
+
+                _, metric_table, csv_metrics = self.export(
+                    self.metrics_csv, ap, max_recall, fppi_miss, fppi_scores, recalls_at_fppi, precisions_at_fppi, tracking_prec)
+            else:
+                _, metric_table, csv_metrics = self.export_fast(
+                    self.metrics_csv, tracking_prec)
             self.pretty_print(metric_table)
 
-            metric_name = 'AP'
+            metric_name = 'HOTA(0)'
             for key in csv_metrics.keys():
                 if key == 'Class':
                     continue

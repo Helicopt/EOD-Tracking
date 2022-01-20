@@ -6,6 +6,7 @@ import torch
 from torch.utils.data.sampler import Sampler
 
 from eod.utils.env.dist_helper import env
+from eod.utils.general.log_helper import default_logger as logger
 from eod.utils.general.registry_factory import SAMPLER_REGISTRY
 
 
@@ -96,6 +97,7 @@ class TestDistributedSeqSampler(Sampler):
                 if mini < 0 or s < mini:
                     idx = i
                     mini = s
+            logger.info('assigning %s to rank%d' % (seq, idx))
             slots[idx] += n
             splits[idx] += indices
         return splits

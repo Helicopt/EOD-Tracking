@@ -203,20 +203,21 @@ class MotionAppearanceOnlineTracker(NoTracking):
             return state.id_cnt * env.world_size + env.rank
         return state.id_cnt
 
-    def get_gt(self, image_id):
+    def get_gt(self, image_id, vimage_id):
         import os
         from senseTk.common import TrackSet
         frame_id = int(os.path.basename(image_id).split('.')[0])
         seq_dir = os.path.dirname(os.path.dirname(image_id))
         gt_file = os.path.join(seq_dir, 'gt', 'gt.txt')
         seq = os.path.basename(seq_dir)
+        vseq, vframe = MultiFrameDataset.parse_seq_info(vimage_id, '{root}/{seq}/{fr}.{ext}')
         if self.use_gt and os.path.exists(gt_file):
-            if not hasattr(self, 'seq_name') or self.seq_name != seq:
-                self.seq_name = seq
+            if not hasattr(self, 'seq_name') or self.seq_name != vseq:
+                self.seq_name = vseq
                 self.gt = TrackSet(gt_file)
-            return seq, frame_id, self.gt[frame_id]
+            return vseq, vframe, self.gt[frame_id]
         else:
-            return seq, frame_id, None
+            return vseq, vframe, None
 
     def collect(self, frame_row, device='cpu'):
         bboxes = []
@@ -339,7 +340,7 @@ class MotionAppearanceOnlineTracker(NoTracking):
         self.fr = state.fr
         bboxes, real_bboxes, embeds = self.preprocess(
             inputs['dt_bboxes'], inputs.get('id_embeds', None), inputs['image_info'])
-        seq, real_frame, gt = self.get_gt(inputs['image_id'])
+        seq, real_frame, gt = self.get_gt(inputs['image_id'], inputs['vimage_id'])
         self.device = bboxes.device
         keep = bboxes[:, 4] > self.keep_thr
         bboxes = bboxes[keep]
