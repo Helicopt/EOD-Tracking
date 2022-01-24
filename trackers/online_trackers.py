@@ -8,6 +8,7 @@ from eod.utils.env.dist_helper import env
 import torch
 import torch.nn.functional as F
 import numpy as np
+from ..data.mot_dataset import MultiFrameDataset
 from ..utils.debug import info_debug, logger_print
 from ..utils.matching import bbox_overlaps, bbox_dist
 try:
