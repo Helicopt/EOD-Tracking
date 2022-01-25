@@ -32,6 +32,7 @@ class TrackingEvaluator(CustomEvaluator):
                  class_names=None,
                  fppi=np.array([0.1, 0.5, 1]),
                  metrics_csv='metrics.csv',
+                 cmp_key='mDT91',
                  label_mapping=None,
                  ignore_mode=0,
                  ign_iou_thresh=0.5,
@@ -58,6 +59,7 @@ class TrackingEvaluator(CustomEvaluator):
         self.iou_types = iou_types
         self._idcnt = 0
         self._idmapping = {}
+        self.cmp_key = cmp_key
 
     def next_id(self, seq_name, uid):
         if seq_name not in self._idmapping:
@@ -392,7 +394,7 @@ class TrackingEvaluator(CustomEvaluator):
             mTrackPrec = csv_metrics['TrackPrec'][-1]
 
             # metric_name = '{}_mAP:{}'.format(itype, self.iou_thresh)
-            metric_name = 'mDT91'
+            metric_name = self.cmp_key
             csv_metrics.update({'mAP': mAP})
             csv_metrics.update({'mTrackPrec': mTrackPrec})
             csv_metrics.update({metric_name: mDT91})

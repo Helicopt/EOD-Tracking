@@ -35,6 +35,7 @@ class TrackEval(TrackingEvaluator):
                  iou_thresh,
                  write_path='data/eval_result',
                  tracker_name='trk',
+                 cmp_key='HOTA(0)',
                  track_eval=_default_trackeval_cfg,
                  fast_eval=False,
                  group_by=None,
@@ -44,9 +45,11 @@ class TrackEval(TrackingEvaluator):
             gt_file,
             num_classes,
             iou_thresh,
+            cmp_key=cmp_key,
             **kwargs)
         self.tracker_name = tracker_name
         self.write_path = write_path
+        self.original_write_path = write_path
         self.track_eval_cfg = track_eval
         self.fast_eval = fast_eval
         self.group_by = group_by
@@ -248,7 +251,8 @@ class TrackEval(TrackingEvaluator):
                     else:
                         for k in res[item]:
                             metric['%s@%s' % (k, rep)] = res[item][k]
-            metric['HOTA(0)'] = metric['HOTA(0)@%s' % self.group_by[0]]
+            if 'HOTA(0)@%s' % self.group_by[0] in metric:
+                metric['HOTA(0)'] = metric['HOTA(0)@%s' % self.group_by[0]]
             return metric
 
     def export_fast(self, output, tracking_prec):
@@ -335,7 +339,8 @@ class TrackEval(TrackingEvaluator):
 
     def eval(self, res_file, res=None):
         tracker_name = self.tracker_name + '-' + time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
-        self.write_path = tempfile.mkdtemp(prefix=tracker_name, suffix='trackeval', dir=self.write_path)
+        os.makedirs(self.original_write_path, exist_ok=True)
+        self.write_path = tempfile.mkdtemp(prefix=tracker_name, suffix='trackeval', dir=self.original_write_path)
         self.build_trackeval_evaluator(self.track_eval_cfg)
 
         metric_res = Metric({})
@@ -408,7 +413,9 @@ class TrackEval(TrackingEvaluator):
                     self.metrics_csv, tracking_prec)
             self.pretty_print(metric_table)
 
-            metric_name = 'HOTA(0)'
+            metric_name = self.cmp_key
+            if metric_name not in metric_res:
+                metric_res[metric_name] = 0
             for key in csv_metrics.keys():
                 if key == 'Class':
                     continue
