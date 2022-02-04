@@ -19,7 +19,7 @@ def extract(src, dest=None):
         detdict = json.loads(row)
         x1, y1, x2, y2 = detdict['bbox']
         uid = detdict['track_id']
-        image_id = detdict['vimage_id']
+        image_id = detdict.get('vimage_id', detdict['image_id'])
         seq, fr = parse(image_id)
         if seq not in cache:
             cache[seq] = TrackSet()

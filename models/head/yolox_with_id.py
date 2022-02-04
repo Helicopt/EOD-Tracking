@@ -81,6 +81,7 @@ class YoloXHeadwID(nn.Module):
                  initializer=None,
                  class_activation='sigmoid',
                  normalize={'type': 'solo_bn'},
+                 normalize_id=False,
                  fuse_lvls_for_id=False,
                  fuse_mode='nearest',
                  se_block=0,
@@ -93,7 +94,8 @@ class YoloXHeadwID(nn.Module):
         self.class_channel = class_channel
         self.fuse_id_lvls = fuse_lvls_for_id
         self.fuse_mode = fuse_mode
-
+        self.normalize_id = normalize_id
+        self.emb_scale = math.sqrt(2) * math.log(num_ids)
         self.cls_convs = nn.ModuleList()
         self.reg_convs = nn.ModuleList()
         self.cls_preds = nn.ModuleList()
@@ -278,6 +280,8 @@ class YoloXHeadwID(nn.Module):
                 id_feat = self.id_convs[i](feat)
                 if self.se_block > 0:
                     id_feat = self.id_se(id_feat)
+                if self.normalize_id:
+                    id_feat = F.normalize(id_feat, dim=1) * self.emb_scale
                 id_pred = self.id_preds(id_feat)
             else:
                 id_feat = None
@@ -293,6 +297,8 @@ class YoloXHeadwID(nn.Module):
                 id_feat = self.id_convs(id_feats[i])
                 if self.se_block > 0:
                     id_feat = self.id_se(id_feat)
+                if self.normalize_id:
+                    id_feat = F.normalize(id_feat, dim=1) * self.emb_scale
                 id_pred = self.id_preds(id_feat)
                 mlvl_roi_features[i][2] = id_feat
                 mlvl_preds[i][2] = id_pred

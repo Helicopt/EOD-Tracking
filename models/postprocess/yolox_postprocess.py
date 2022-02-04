@@ -25,6 +25,7 @@ class YoloxwIDPostProcess(nn.Module):
                  cfg,
                  dismiss_aug=False,
                  norm_on_bbox=False,
+                 balanced_loss_weight='none',
                  all_reduce_norm=True,
                  use_l1=False):
         super(YoloxwIDPostProcess, self).__init__()
@@ -49,6 +50,15 @@ class YoloxwIDPostProcess(nn.Module):
         self.l1_loss = nn.L1Loss(reduction="none")
         self.use_l1 = use_l1
         self.dismiss_aug = dismiss_aug
+        self.balanced_loss_weight = balanced_loss_weight
+        if self.balanced_loss_weight == 'none':
+            self.lw_id = 1.
+            self.lw_det = 1.
+        elif self.balanced_loss_weight == 'auto':
+            self.lw_id = nn.Parameter(-1.05 * torch.ones(1))
+            self.lw_det = nn.Parameter(-1.85 * torch.ones(1))
+        else:
+            assert False, '%s not defined' % self.balanced_loss_weight
 
         # config
         self.cfg = copy.deepcopy(cfg)
@@ -201,6 +211,21 @@ class YoloxwIDPostProcess(nn.Module):
                 l1_loss = ori_loc_preds.sum()
         else:
             l1_loss = torch.tensor(0.0).cuda()
+        lw_id = self.lw_id
+        lw_det = self.lw_det
+        if self.balanced_loss_weight == 'auto':
+            lw_id = torch.exp(-lw_id)
+            lw_det = torch.exp(-lw_det)
+            return {
+                self.prefix + '.cls_loss': cls_loss * lw_det,
+                self.prefix + '.loc_loss': loc_loss * lw_det,
+                self.prefix + '.id_loss': id_loss * lw_id,
+                self.prefix + '.obj_loss': obj_loss * lw_det,
+                self.prefix + '.l1_loss': l1_loss * lw_det,
+                self.prefix + '.l1_loss': self.lw_id + self.lw_det,
+                self.prefix + '.accuracy': acc,
+                self.prefix + '.accuracy_id': acc_id,
+            }
         return {
             self.prefix + '.cls_loss': cls_loss,
             self.prefix + '.loc_loss': loc_loss,

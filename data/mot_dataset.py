@@ -4,6 +4,7 @@ from __future__ import division
 import json
 import math
 import os
+import re
 
 # Import from third library
 import cv2
@@ -57,6 +58,7 @@ class MultiFrameDataset(CustomDataset):
                  cache=None,
                  clip_box=True,
                  ignore_vis_under=0.0,
+                 filter=None,
                  ):
         self.id_cnt = 0
         self.num_ids = num_ids
@@ -69,6 +71,7 @@ class MultiFrameDataset(CustomDataset):
         self.repeat_num = repeat_to
         self.online = online
         self.ignore_vis_under = ignore_vis_under
+        self.filter = filter
         super(MultiFrameDataset, self).__init__(
             meta_file, image_reader, transformer, num_classes,
             evaluator=evaluator, label_mapping=label_mapping, cache=cache, clip_box=clip_box)
@@ -110,6 +113,8 @@ class MultiFrameDataset(CustomDataset):
                 else:
                     vfilename = data['virtual_filename']
                     vseq_name, vframe_id = self.parse_seq_info(vfilename, '{root}/{seq}/{fr}.{ext}')
+                if self.filter is not None and not re.match(self.filter, vseq_name):
+                    continue
                 if vseq_name not in self.sequences:
                     self.sequences[vseq_name] = {}
                 if seq_name not in self.id_mapping:

@@ -16,7 +16,7 @@ __all__ = ['RelationYOLOX', 'RelationRetina']
 @MODULE_ZOO_REGISTRY.register('relation_yolox')
 class RelationYOLOX(nn.Module):
 
-    def __init__(self, relation_cfgs, yolox_kwargs, inplanes, num_to_refine=1000, num_as_ref=500, share=False, refine_objness=True, dismiss_aug=False, init_prior=0.01):
+    def __init__(self, relation_cfgs, yolox_kwargs, inplanes, num_to_refine=1000, num_as_ref=500, share=False, refine_objness=True, dismiss_aug=False, init_prior=0.01, balanced_loss_weight='none'):
         super().__init__()
         self.vis = True
         self.prefix = self.__class__.__name__
@@ -26,6 +26,15 @@ class RelationYOLOX(nn.Module):
         self.num_as_ref = num_as_ref
         self.size_factors = []
         self.dismiss_aug = dismiss_aug
+        self.balanced_loss_weight = balanced_loss_weight
+        if self.balanced_loss_weight == 'none':
+            self.lw_id = 1.
+            self.lw_det = 1.
+        elif self.balanced_loss_weight == 'auto':
+            self.lw_id = nn.Parameter(-1.05 * torch.ones(1))
+            self.lw_det = nn.Parameter(-1.85 * torch.ones(1))
+        else:
+            assert False, '%s not defined' % self.balanced_loss_weight
         for i in range(len(self.inplanes)):
             self.size_factors.insert(0, 1 << (i << 1))
         yolox_kwargs.update({'inplanes': self.inplanes})
@@ -355,6 +364,11 @@ class RelationYOLOX(nn.Module):
 
     def get_loss(self, target, fg_masks, mlvl_preds, gt_indices, noaug_flag=None):
         # info_debug(mlvl_preds)
+        lw_id = self.lw_id
+        lw_det = self.lw_det
+        if self.balanced_loss_weight == 'auto':
+            lw_id = torch.exp(-lw_id)
+            lw_det = torch.exp(-lw_det)
         fg_masks = torch.cat(fg_masks, dim=1)
         preds = list(zip(*mlvl_preds))
         losses = {}
@@ -382,15 +396,19 @@ class RelationYOLOX(nn.Module):
                 num_ids = max(num_ids, 1)
                 loss = getattr(self, feat_name + '_loss')(pred[fg_masks][valid],
                                                           target_this[valid][:, 1:], normalizer_override=num_ids)
+                loss = loss * lw_id
             else:
                 # info_debug([pred, fg_masks, pred[fg_masks], gt_indices, target[idx]])
                 loss = getattr(self, feat_name + '_loss')(pred[fg_masks], target_this, normalizer_override=num_fgs)
+                loss = loss * lw_det
             losses[self.prefix + '.' + feat_name + '_loss'] = loss
         if self.refine_obj:
             losses[self.prefix + '.obj_loss'] = self.post_module.obj_loss(
                 torch.cat(preds[3], dim=1).flatten(),
                 fg_masks.flatten(),
-                normalizer_override=num_fgs)
+                normalizer_override=num_fgs) * lw_det
+        if self.balanced_loss_weight == 'auto':
+            losses[self.prefix + '.lwnorm_loss'] = self.lw_id + self.lw_det
         return losses
 
 

@@ -100,6 +100,7 @@ class TestDistributedSeqSampler(Sampler):
             logger.info('assigning %s to rank%d' % (seq, idx))
             slots[idx] += n
             splits[idx] += indices
+        logger.info('load balance delta: %d' % (max(slots) - min(slots)))
         return splits
 
     def __init__(self, dataset, num_replicas=None, rank=None):
