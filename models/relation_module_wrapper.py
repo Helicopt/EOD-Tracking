@@ -16,7 +16,7 @@ __all__ = ['RelationYOLOX', 'RelationRetina']
 @MODULE_ZOO_REGISTRY.register('relation_yolox')
 class RelationYOLOX(nn.Module):
 
-    def __init__(self, relation_cfgs, yolox_kwargs, inplanes, num_to_refine=1000, num_as_ref=500, share=False, refine_objness=True, dismiss_aug=False, init_prior=0.01, balanced_loss_weight='none'):
+    def __init__(self, relation_cfgs, yolox_kwargs, inplanes, num_to_refine=1000, num_as_ref=500, share=False, refine_objness=True, dismiss_aug=False, init_prior=0.01, normalize_id=False, balanced_loss_weight='none'):
         super().__init__()
         self.vis = True
         self.prefix = self.__class__.__name__
@@ -42,6 +42,8 @@ class RelationYOLOX(nn.Module):
             type='yolox_post_w_id',
             kwargs=yolox_kwargs,
         ))
+        self.normalize_id = normalize_id
+        self.emb_scale = math.sqrt(2) * math.log(self.post_module.num_ids)
         self.roi_pred_dims = {0: self.post_module.num_classes - 1,
                               1: 4, 2: self.post_module.num_ids}
         self.relation_modules = nn.ModuleList()
@@ -295,6 +297,8 @@ class RelationYOLOX(nn.Module):
                         refined_feats, _ = self.relation_modules[lvl_idx][relation_idx](
                             roi_feat, roi_feat_ref, original_preds=roi_preds)
                     refined_feats = refined_feats.permute(0, 2, 1).unsqueeze(-1)
+                    if self.roi_features_mappings[idx] == 'id' and self.normalize_id:
+                        refined_feats = F.normalize(refined_feats, dim=1) * self.emb_scale
                     pred_func = getattr(self, self.roi_features_mappings[idx] + '_preds')
                     if isinstance(pred_func, nn.ModuleList):
                         refined_lvl_pred = pred_func[lvl_idx](refined_feats)
