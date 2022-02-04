@@ -31,8 +31,8 @@ class RelationYOLOX(nn.Module):
             self.lw_id = 1.
             self.lw_det = 1.
         elif self.balanced_loss_weight == 'auto':
-            self.lw_id = nn.Parameter(-1.05 * torch.ones(1))
-            self.lw_det = nn.Parameter(-1.85 * torch.ones(1))
+            self.lw_id = nn.Parameter(-0.5 * torch.ones(1))
+            self.lw_det = nn.Parameter(-0.6 * torch.ones(1))
         else:
             assert False, '%s not defined' % self.balanced_loss_weight
         for i in range(len(self.inplanes)):
