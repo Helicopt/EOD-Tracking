@@ -26,6 +26,7 @@ class YoloxwIDPostProcess(nn.Module):
                  dismiss_aug=False,
                  norm_on_bbox=False,
                  balanced_loss_weight='none',
+                 balance_scale=1.,
                  all_reduce_norm=True,
                  use_l1=False):
         super(YoloxwIDPostProcess, self).__init__()
@@ -51,6 +52,7 @@ class YoloxwIDPostProcess(nn.Module):
         self.use_l1 = use_l1
         self.dismiss_aug = dismiss_aug
         self.balanced_loss_weight = balanced_loss_weight
+        self.balance_scale = balance_scale
         if self.balanced_loss_weight == 'none':
             self.lw_id = 1.
             self.lw_det = 1.
@@ -222,7 +224,7 @@ class YoloxwIDPostProcess(nn.Module):
                 self.prefix + '.id_loss': id_loss * lw_id,
                 self.prefix + '.obj_loss': obj_loss * lw_det,
                 self.prefix + '.l1_loss': l1_loss * lw_det,
-                self.prefix + '.lwnorm_loss': self.lw_id + self.lw_det,
+                self.prefix + '.lwnorm_loss': (self.lw_id + self.lw_det) * self.balance_scale,
                 self.prefix + '.accuracy': acc,
                 self.prefix + '.accuracy_id': acc_id,
             }

@@ -16,7 +16,7 @@ __all__ = ['RelationYOLOX', 'RelationRetina']
 @MODULE_ZOO_REGISTRY.register('relation_yolox')
 class RelationYOLOX(nn.Module):
 
-    def __init__(self, relation_cfgs, yolox_kwargs, inplanes, num_to_refine=1000, num_as_ref=500, share=False, refine_objness=True, dismiss_aug=False, init_prior=0.01, normalize_id=False, balanced_loss_weight='none'):
+    def __init__(self, relation_cfgs, yolox_kwargs, inplanes, num_to_refine=1000, num_as_ref=500, share=False, refine_objness=True, dismiss_aug=False, init_prior=0.01, normalize_id=False, balanced_loss_weight='none', balance_scale=1.):
         super().__init__()
         self.vis = True
         self.prefix = self.__class__.__name__
@@ -27,6 +27,7 @@ class RelationYOLOX(nn.Module):
         self.size_factors = []
         self.dismiss_aug = dismiss_aug
         self.balanced_loss_weight = balanced_loss_weight
+        self.balance_scale = balance_scale
         if self.balanced_loss_weight == 'none':
             self.lw_id = 1.
             self.lw_det = 1.
@@ -412,7 +413,7 @@ class RelationYOLOX(nn.Module):
                 fg_masks.flatten(),
                 normalizer_override=num_fgs) * lw_det
         if self.balanced_loss_weight == 'auto':
-            losses[self.prefix + '.lwnorm_loss'] = self.lw_id + self.lw_det
+            losses[self.prefix + '.lwnorm_loss'] = (self.lw_id + self.lw_det) * self.balance_scale
         return losses
 
 

@@ -281,8 +281,10 @@ class YoloXHeadwID(nn.Module):
                 if self.se_block > 0:
                     id_feat = self.id_se(id_feat)
                 if self.normalize_id:
-                    id_feat = F.normalize(id_feat, dim=1) * self.emb_scale
-                id_pred = self.id_preds(id_feat)
+                    id_feat_norm = F.normalize(id_feat, dim=1) * self.emb_scale
+                else:
+                    id_feat_norm = id_feat
+                id_pred = self.id_preds(id_feat_norm)
             else:
                 id_feat = None
                 id_pred = None
@@ -298,8 +300,10 @@ class YoloXHeadwID(nn.Module):
                 if self.se_block > 0:
                     id_feat = self.id_se(id_feat)
                 if self.normalize_id:
-                    id_feat = F.normalize(id_feat, dim=1) * self.emb_scale
-                id_pred = self.id_preds(id_feat)
+                    id_feat_norm = F.normalize(id_feat, dim=1) * self.emb_scale
+                else:
+                    id_feat_norm = id_feat
+                id_pred = self.id_preds(id_feat_norm)
                 mlvl_roi_features[i][2] = id_feat
                 mlvl_preds[i][2] = id_pred
                 mlvl_roi_features[i] = tuple(mlvl_roi_features[i])
