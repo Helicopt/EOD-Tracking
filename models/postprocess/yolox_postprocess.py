@@ -134,7 +134,7 @@ class YoloxwIDPostProcess(nn.Module):
             if not self.use_l1:
                 losses = self.get_loss(targets, mlvl_preds, noaug_flag=noaug_flag)
             else:
-                losses = self.get_loss(targets, mlvl_preds, mlvl_ori_loc_preds, noag_flag=noaug_flag)
+                losses = self.get_loss(targets, mlvl_preds, mlvl_ori_loc_preds, noaug_flag=noaug_flag)
             return losses
         else:
             id_feats = [lvl_feats[2] for lvl_feats in input['roi_features']]
