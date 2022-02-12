@@ -43,9 +43,15 @@ class MOTYoloxNoaug(Hook):
                 runner.data_iterators['train'] = iter(runner.data_loaders["train"])
                 try:
                     if env.world_size > 1:
-                        runner.model.module.relation_module.post_module.use_l1 = True
+                        if hasattr(runner.model.module, 'relation_module'):
+                            runner.model.module.relation_module.post_module.use_l1 = True
+                        else:
+                            runner.model.module.yolox_post.use_l1 = True
                     else:
-                        runner.model.relation_module.post_module.use_l1 = True
+                        if hasattr(runner.model, 'relation_module'):
+                            runner.model.relation_module.post_module.use_l1 = True
+                        else:
+                            runner.model.yolox_post.use_l1 = True
                 except:  # noqa
                     pass
                 runner.test_freq = self.test_freq
