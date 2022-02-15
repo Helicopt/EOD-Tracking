@@ -35,7 +35,7 @@ class TrackEval(TrackingEvaluator):
                  iou_thresh,
                  write_path='data/eval_result',
                  tracker_name='trk',
-                 cmp_key='HOTA(0)',
+                 cmp_key='HOTA',
                  track_eval=_default_trackeval_cfg,
                  fast_eval=False,
                  group_by=None,
@@ -172,7 +172,8 @@ class TrackEval(TrackingEvaluator):
             for target in gt_targets:
                 track_id = target['track_id']
                 x1, y1, x2, y2 = target['bbox']
-                target_line = f'{frame_id},{track_id},{x1},{y1},{x2},{y2},1,1,1\n'
+                width_s, height_s = x2 - x1, y2 - y1
+                target_line = f'{frame_id},{track_id},{x1},{y1},{width_s},{height_s},1,1,1\n'
                 gt_writer[seq_name].writelines(target_line)
         for f in gt_writer:
             gt_writer[f].close()
@@ -197,7 +198,8 @@ class TrackEval(TrackingEvaluator):
                 dt_writer[seq_name] = open(os.path.join(dt_write_path, f'{seq_name}.txt'), 'w')
             track_id = target['track_id']
             x1, y1, x2, y2 = target['bbox']
-            target_line = f'{frame_id},{track_id},{x1},{y1},{x2},{y2},1,1,1\n'
+            width_s, height_s = x2 - x1, y2 - y1
+            target_line = f'{frame_id},{track_id},{x1},{y1},{width_s},{height_s},1,1,1\n'
             dt_writer[seq_name].writelines(target_line)
         for f in dt_writer:
             dt_writer[f].close()
@@ -220,6 +222,7 @@ class TrackEval(TrackingEvaluator):
                     continue
                 if item == 'HOTA':
                     metric['HOTA(0)'] = res[item]['HOTA(0)']
+                    metric['HOTA'] = float(np.mean(res[item]['HOTA']))
                 else:
                     metric.update(res[item])
             return metric
@@ -248,11 +251,14 @@ class TrackEval(TrackingEvaluator):
                         continue
                     if item == 'HOTA':
                         metric['HOTA(0)@%s' % rep] = res[item]['HOTA(0)']
+                        metric['HOTA@%s' % rep] = float(np.mean(res[item]['HOTA']))
                     else:
                         for k in res[item]:
                             metric['%s@%s' % (k, rep)] = res[item][k]
             if 'HOTA(0)@%s' % self.group_by[0] in metric:
                 metric['HOTA(0)'] = metric['HOTA(0)@%s' % self.group_by[0]]
+            if 'HOTA@%s' % self.group_by[0] in metric:
+                metric['HOTA'] = metric['HOTA@%s' % self.group_by[0]]
             return metric
 
     def export_fast(self, output, tracking_prec):

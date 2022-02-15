@@ -6,7 +6,10 @@ import json
 
 def parse(image_id):
     fr = int(os.path.basename(image_id).split('.')[0])
-    seq_dir = os.path.dirname(os.path.dirname(image_id))
+    if 'virtual_path' in image_id:
+        seq_dir = os.path.dirname(image_id)
+    else:
+        seq_dir = os.path.dirname(os.path.dirname(image_id))
     seq = os.path.basename(seq_dir)
     return seq, fr
 
@@ -19,7 +22,8 @@ def extract(src, dest=None):
         detdict = json.loads(row)
         x1, y1, x2, y2 = detdict['bbox']
         uid = detdict['track_id']
-        image_id = detdict.get('vimage_id', detdict['image_id'])
+        image_id = detdict['image_id']
+        # image_id = detdict.get('vimage_id', detdict['image_id'])
         seq, fr = parse(image_id)
         if seq not in cache:
             cache[seq] = TrackSet()
