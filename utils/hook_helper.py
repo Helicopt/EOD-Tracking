@@ -264,3 +264,37 @@ class RelMapVis(Hook):
                 self.summary_writer.flush()
             except Exception as e:
                 pass
+
+
+@HOOK_REGISTRY.register('custom_auto_save')
+class CustomAutoSave(Hook):
+    """save some epochs
+    """
+
+    def __init__(self, runner, save_epochs=[]):
+        super(CustomAutoSave, self).__init__(runner)
+        self.save_epochs = save_epochs
+
+    def _save_ckpt(self, prefix='best'):
+        cur_epoch = self.runner_ref().cur_epoch()
+        cur_iter = self.runner_ref().cur_iter
+        if env.is_master():
+            if self.runner_ref().ema is not None:
+                ema = self.runner_ref().ema.state_dict()
+            else:
+                ema = {}
+            self.runner_ref().saver.save(epoch=cur_epoch,
+                                         iter=cur_iter,
+                                         lns=False,
+                                         auto_save=prefix,
+                                         metric_val=0,
+                                         state_dict=self.runner_ref().model.state_dict(),
+                                         optimizer=self.runner_ref().optimizer.state_dict(),
+                                         ema=ema,
+                                         lr_scheduler=self.runner_ref().lr_scheduler.state_dict())
+
+    def after_epoch(self, cur_epoch):
+        self.cur_epoch = cur_epoch
+        if self.cur_epoch in self.save_epochs:
+            self._save_ckpt(f'e{self.cur_epoch}')
+            logger.info(f'custom saved epoch: {self.cur_epoch}')
