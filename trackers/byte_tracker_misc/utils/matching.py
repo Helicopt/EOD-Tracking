@@ -95,6 +95,68 @@ def iou_distance(atracks, btracks):
     return cost_matrix
 
 
+def sims(afeats, bfeats):
+    n = len(afeats)
+    m = len(bfeats)
+    if n == 0:
+        return np.zeros((0, m))
+    if m == 0:
+        return np.zeros((n, 0))
+    return np.matmul(np.stack(afeats), np.stack(bfeats).T)
+
+
+def cos_sim(atracks, btracks):
+    if (len(atracks) > 0 and isinstance(atracks[0], np.ndarray)) or (len(btracks) > 0 and isinstance(btracks[0], np.ndarray)):
+        afeats = atracks
+        bfeats = btracks
+    else:
+        afeats = [track._embed.cpu().numpy() for track in atracks]
+        bfeats = [track._embed.cpu().numpy() for track in btracks]
+    cost_matrix = sims(afeats, bfeats)
+
+    return cost_matrix
+
+
+def e_distance(atracks, btracks, x1y1x2y2=True):
+    """
+    Returns the normalized euclidean distance of two bounding boxes
+    """
+    if (len(atracks) > 0 and isinstance(atracks[0], np.ndarray)) or (len(btracks) > 0 and isinstance(btracks[0], np.ndarray)):
+        atlbrs = atracks
+        btlbrs = btracks
+    else:
+        atlbrs = [track.tlbr for track in atracks]
+        btlbrs = [track.tlbr for track in btracks]
+
+    box1 = np.array(atlbrs)
+    box2 = np.array(btlbrs)
+
+    N, M = len(box1), len(box2)
+    if N == 0 or M == 0:
+        return np.zeros((N, M))
+
+    if x1y1x2y2:
+        # Get the coordinates of bounding boxes
+        b1_x1, b1_y1, b1_x2, b1_y2 = box1[:, 0], box1[:, 1], box1[:, 2], box1[:, 3]
+        b2_x1, b2_y1, b2_x2, b2_y2 = box2[:, 0], box2[:, 1], box2[:, 2], box2[:, 3]
+    else:
+        # Transform from center and width to exact coordinates
+        b1_x1, b1_x2 = box1[:, 0] - box1[:, 2] / 2, box1[:, 0] + box1[:, 2] / 2
+        b1_y1, b1_y2 = box1[:, 1] - box1[:, 3] / 2, box1[:, 1] + box1[:, 3] / 2
+        b2_x1, b2_x2 = box2[:, 0] - box2[:, 2] / 2, box2[:, 0] + box2[:, 2] / 2
+        b2_y1, b2_y2 = box2[:, 1] - box2[:, 3] / 2, box2[:, 1] + box2[:, 3] / 2
+
+    dx1 = (b1_x1.reshape(-1, 1) - b2_x1.reshape(1, -1))
+    dx2 = (b1_x2.reshape(-1, 1) - b2_x2.reshape(1, -1))
+    dy1 = (b1_y1.reshape(-1, 1) - b2_y1.reshape(1, -1))
+    dy2 = (b1_y2.reshape(-1, 1) - b2_y2.reshape(1, -1))
+    w1 = b1_x2 - b1_x1
+    w2 = b2_x2 - b2_x1
+    minw = np.minimum(w1.reshape(-1, 1), w2)
+    dist = (np.abs(dx1) + np.abs(dx2) + np.abs(dy1) + np.abs(dy2)) / 4 / (minw + 1e-12)
+    return dist
+
+
 def v_iou_distance(atracks, btracks):
     """
     Compute cost based on IoU
