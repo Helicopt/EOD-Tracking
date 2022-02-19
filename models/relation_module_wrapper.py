@@ -65,7 +65,7 @@ class RelationYOLOX(nn.Module):
             idx = self.relation_indices[relation_idx]
             if self.roi_features_mappings[relation_idx] == 'id' or share:
                 mod_list = nn.Conv2d(
-                    in_channels=lvl_c,
+                    in_channels=self.inplanes[0],
                     out_channels=self.roi_pred_dims[relation_idx],
                     kernel_size=1,
                     stride=1,

@@ -13,9 +13,19 @@ __all__ = ['SQGARelaton']
 @MODULE_ZOO_REGISTRY.register('sqga')
 class SQGARelaton(nn.Module):
 
-    def __init__(self, embed_dim, loss, detach=False, beta=0.1, np_ratio=3, ** kwargs):
+    def __init__(self, embed_dim, loss, nhead=1, nstage=1, prenorm=False, detach=False, beta=0.1, np_ratio=3, ** kwargs):
         super().__init__()
-        self.relation_layer = CustomMHA(embed_dim, 1)
+        self.nstage = nstage
+        self.nhead = nhead
+        if nstage == 1:
+            self.relation_layer = CustomMHA(embed_dim, nhead)
+        else:
+            self.relation_layer = nn.ModuleList()
+            for i in range(nstage):
+                self.relation_layer.append(CustomMHA(embed_dim, nhead))
+        self.prenorm = prenorm
+        if self.prenorm:
+            self.prenorm_layer = nn.LayerNorm(embed_dim)
         self.dropout = nn.Dropout(0.1)
         self.norm = nn.LayerNorm(embed_dim)
         self.qlt_net = nn.Sequential(
@@ -37,6 +47,10 @@ class SQGARelaton(nn.Module):
 
     def forward(self, main_feats, ref_feats, target_main=None, target_ref=None, original_preds=None):
         b, m, c = ref_feats.shape
+        b, n, c = main_feats.shape
+        if self.prenorm:
+            main_feats = self.prenorm_layer(main_feats)
+            ref_feats = self.prenorm_layer(ref_feats)
         if self.detach:
             qlt_main = self.qlt_net(main_feats.detach())
             qlt_ref = self.qlt_net(ref_feats.detach())
@@ -51,17 +65,30 @@ class SQGARelaton(nn.Module):
             qmasks.append(qlt_mask_i)
         qmasks = torch.stack(qmasks)
         valid_mask = ~qmasks
-        if self.detach:
-            rf = real_ref_feats.detach().permute(1, 0, 2)
-            attention, affinities = self.relation_layer(
-                main_feats.detach().permute(1, 0, 2), rf, rf, attn_mask=valid_mask)
-        else:
-            rf = real_ref_feats.permute(1, 0, 2)
-            attention, affinities = self.relation_layer(
-                main_feats.permute(1, 0, 2), rf, rf, attn_mask=valid_mask)
-        attention = attention.permute(1, 0, 2)
-        refined_feats = self.norm(main_feats + self.dropout(attention))
-        sims = affinities[:, :, :m]
+        if self.nhead > 1:
+            valid_mask = valid_mask.reshape(b, 1, main_feats.shape[1], real_ref_feats.shape[1])\
+                .repeat(1, self.nhead, 1, 1)\
+                .reshape(b * self.nhead, main_feats.shape[1], real_ref_feats.shape[1])
+        all_sims = 0
+        for i in range(self.nstage):
+            if self.nstage == 1:
+                mod = self.relation_layer
+            else:
+                mod = self.relation_layer[i]
+            if self.detach:
+                rf = real_ref_feats.detach().permute(1, 0, 2)
+                attention, affinities = mod(
+                    main_feats.detach().permute(1, 0, 2), rf, rf, attn_mask=valid_mask)
+            else:
+                rf = real_ref_feats.permute(1, 0, 2)
+                attention, affinities = mod(
+                    main_feats.permute(1, 0, 2), rf, rf, attn_mask=valid_mask)
+            attention = attention.permute(1, 0, 2)
+            refined_feats = self.norm(main_feats + self.dropout(attention))
+            main_feats = refined_feats
+            sims = affinities[:, :, :m]
+            all_sims = all_sims + sims
+        sims = all_sims / self.nstage
         if self.training:
             qlt_loss = self.get_qlt_loss(qlt_main, original_preds, target_main)
             sim_loss, sim_target = self.get_sim_loss(sims, target_main, target_ref)
