@@ -293,8 +293,14 @@ class CustomAutoSave(Hook):
                                          ema=ema,
                                          lr_scheduler=self.runner_ref().lr_scheduler.state_dict())
 
-    def after_epoch(self, cur_epoch):
-        self.cur_epoch = cur_epoch
+    # def after_epoch(self, cur_epoch):
+    #     self.cur_epoch = cur_epoch
+    #     if self.cur_epoch in self.save_epochs:
+    #         self._save_ckpt(f'e{self.cur_epoch}')
+    #         logger.info(f'custom saved epoch: {self.cur_epoch}')
+
+    def after_eval(self, metrics):
+        self.cur_epoch = self.runner_ref().cur_epoch()
         if self.cur_epoch in self.save_epochs:
             self._save_ckpt(f'e{self.cur_epoch}')
             logger.info(f'custom saved epoch: {self.cur_epoch}')
