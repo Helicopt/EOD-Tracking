@@ -244,6 +244,8 @@ class JDETracker(NoTracking):
         gt_file = os.path.join(seq_dir, 'gt', 'gt.txt')
         # seq = os.path.basename(seq_dir)
         seq = os.path.basename(os.path.dirname(vimage_id))
+        if not seq.startswith('S-'):
+            seq = os.path.basename(seq_dir)
         if self.use_gt and os.path.exists(gt_file):
             if not hasattr(self, 'seq_name') or self.seq_name != seq:
                 self.seq_name = seq
@@ -298,11 +300,14 @@ class JDETracker(NoTracking):
         return raw_bboxes, bboxes, embeds
 
     def get_seq_config(self, seq):
-        splits = seq.split('-')
-        _, skip, = splits[:2]
-        major, seqno, = splits[-2:]
-        # print(skip, major, seqno)
-        skip = int(skip)
+        if seq.startswith('S-'):
+            splits = seq.split('-')
+            _, skip, = splits[:2]
+            major, seqno, = splits[-2:]
+            # print(skip, major, seqno)
+            skip = int(skip)
+        else:
+            skip = 1
         ret = {'thr_first': 0.8, 'thr_second': 0.9, 'skip': skip}
         if skip <= 2:
             pass
