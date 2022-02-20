@@ -5,6 +5,7 @@ from easydict import EasyDict
 
 from eod.utils.general.registry_factory import DATALOADER_REGISTRY
 from eod.data.data_loader import BaseDataLoader
+import torch
 
 
 __all__ = ['MOTDataLoader']
@@ -56,7 +57,8 @@ class MOTDataLoader(BaseDataLoader):
         begin_flags = [one['begin_flag'] for one in batch]
         end_flags = [one['end_flag'] for one in batch]
         noaug_flags = [one['noaug_flag'] for one in batch]
-        return {'main': main, 'ref': ref, 'begin_flag': begin_flags, 'end_flag': end_flags, 'noaug_flag': noaug_flags}
+        framerates = torch.Tensor([one['framerate'] for one in batch])
+        return {'main': main, 'ref': ref, 'begin_flag': begin_flags, 'end_flag': end_flags, 'noaug_flag': noaug_flags, 'framerate': framerates}
 
     def _process(self, batch):
         images = [_['image'] for _ in batch]

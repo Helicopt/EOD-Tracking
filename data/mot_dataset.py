@@ -59,6 +59,7 @@ class MultiFrameDataset(CustomDataset):
                  clip_box=True,
                  ignore_vis_under=0.0,
                  filter=None,
+                 multiframerates=None,
                  ):
         self.id_cnt = 0
         self.num_ids = num_ids
@@ -71,6 +72,7 @@ class MultiFrameDataset(CustomDataset):
         self.repeat_num = repeat_to
         self.online = online
         self.ignore_vis_under = ignore_vis_under
+        self.multiframerates = multiframerates
         self.filter = filter
         super(MultiFrameDataset, self).__init__(
             meta_file, image_reader, transformer, num_classes,
@@ -255,8 +257,14 @@ class MultiFrameDataset(CustomDataset):
             }
         """
         seq_name, frame_id = self.seq_metas[idx]
-        options = [fr for fr in self.sequences[seq_name] if abs(
-            fr - frame_id) <= self.frame_involved and fr != frame_id]
+        if self.multiframerates is None:
+            options = [fr for fr in self.sequences[seq_name] if abs(
+                fr - frame_id) <= self.frame_involved and fr != frame_id]
+        else:
+            sampled_framerate = int(np.random.choice(self.multiframerates, 1))
+            options = [fr for fr in self.sequences[seq_name]
+                       if abs(fr - frame_id) <= self.frame_involved * sampled_framerate
+                       and fr != frame_id and abs(fr - frame_id) % sampled_framerate == 0]
         if not self.random_select:
             old_state = np.random.get_state()
             new_state = np.random.MT19937(0).state
@@ -266,7 +274,10 @@ class MultiFrameDataset(CustomDataset):
             options.append(frame_id)
             chosen2 = np.random.choice(options, self.num_expected - len(chosen))
             chosen = np.concatenate([chosen, chosen2])
-        chosen = list(chosen)
+        chosen = list(map(int, chosen))
+        if re.match(r'^S-[\d]+-', seq_name):
+            sampled_framerate *= int(seq_name.split('-')[1])
+
         # print(seq_name, frame_id, chosen)
 
         if len(options) < 2:
@@ -292,6 +303,7 @@ class MultiFrameDataset(CustomDataset):
             'begin_flag': frame_id == self.seq_controls[seq_name]['begin'],
             'end_flag': frame_id == self.seq_controls[seq_name]['end'],
             'noaug_flag': noaug_flag,
+            'framerate': sampled_framerate,
         }
 
     @property

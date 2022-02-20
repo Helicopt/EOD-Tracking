@@ -13,7 +13,7 @@ __all__ = ['SQGARelaton']
 @MODULE_ZOO_REGISTRY.register('sqga')
 class SQGARelaton(nn.Module):
 
-    def __init__(self, embed_dim, loss, nhead=1, nstage=1, prenorm=False, detach=False, beta=0.1, np_ratio=3, ** kwargs):
+    def __init__(self, embed_dim, loss, nhead=1, nstage=1, prenorm=False, detach=False, framerate_aware=None, beta=0.1, np_ratio=3, ** kwargs):
         super().__init__()
         self.nstage = nstage
         self.nhead = nhead
@@ -26,6 +26,14 @@ class SQGARelaton(nn.Module):
         self.prenorm = prenorm
         if self.prenorm:
             self.prenorm_layer = nn.LayerNorm(embed_dim)
+        self.framerate_aware = framerate_aware
+        if self.framerate_aware == 'attention':
+            self.framerate_attention = nn.Sequential(
+                nn.Linear(128, 128),
+                nn.ReLU(),
+                nn.Linear(128, embed_dim),
+                nn.Sigmoid(),
+            )
         self.dropout = nn.Dropout(0.1)
         self.norm = nn.LayerNorm(embed_dim)
         self.qlt_net = nn.Sequential(
@@ -45,7 +53,7 @@ class SQGARelaton(nn.Module):
         self.vis = True
         self.detach = detach
 
-    def forward(self, main_feats, ref_feats, target_main=None, target_ref=None, original_preds=None):
+    def forward(self, main_feats, ref_feats, target_main=None, target_ref=None, original_preds=None, framerates=None):
         b, m, c = ref_feats.shape
         b, n, c = main_feats.shape
         if self.prenorm:
@@ -84,6 +92,13 @@ class SQGARelaton(nn.Module):
                 attention, affinities = mod(
                     main_feats.permute(1, 0, 2), rf, rf, attn_mask=valid_mask)
             attention = attention.permute(1, 0, 2)
+            if self.framerate_aware == 'attention' and framerates is not None:
+                framerates_emb = torch.arange(128, device=main_feats.device, dtype=main_feats.dtype).reshape(
+                    1, 128).repeat(main_feats.size(0), 1)
+                framerates_emb = torch.cos(framerates_emb * framerates.reshape(-1, 1) * 1.5 / 128)
+                framerates_att = self.framerate_attention(framerates_emb)
+                # logger_print(framerates_att)
+                attention = attention * framerates_att.unsqueeze(1)
             refined_feats = self.norm(main_feats + self.dropout(attention))
             main_feats = refined_feats
             sims = affinities[:, :, :m]

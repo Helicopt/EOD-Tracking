@@ -291,12 +291,13 @@ class RelationYOLOX(nn.Module):
                             target_this = [torch.cat([o.new_zeros((o.size(0), 1)), o], dim=1) for o in target_this]
                             target_ref = [torch.cat([o.new_zeros((o.size(0), 1)), o], dim=1) for o in target_ref]
                         refined_feats, relation_stuffs = self.relation_modules[lvl_idx][relation_idx](roi_feat, roi_feat_ref, target_main=(
-                            selected_fg_masks, target_this), target_ref=(selected_fg_masks_ref, target_ref), original_preds=roi_preds)
+                            selected_fg_masks, target_this), target_ref=(selected_fg_masks_ref, target_ref), original_preds=roi_preds,
+                            framerates=data.get('framerate', None))
                         for k, v in relation_stuffs.items():
                             all_relation_stuffs['relation.%d.%d.%s' % (lvl_idx, relation_idx, k)] = v
                     else:
                         refined_feats, _ = self.relation_modules[lvl_idx][relation_idx](
-                            roi_feat, roi_feat_ref, original_preds=roi_preds)
+                            roi_feat, roi_feat_ref, original_preds=roi_preds, framerates=data.get('framerate', None))
                     refined_feats = refined_feats.permute(0, 2, 1).unsqueeze(-1)
                     if self.roi_features_mappings[idx] == 'id' and self.normalize_id:
                         refined_feats = F.normalize(refined_feats, dim=1) * self.emb_scale
