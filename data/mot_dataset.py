@@ -260,6 +260,7 @@ class MultiFrameDataset(CustomDataset):
         if self.multiframerates is None:
             options = [fr for fr in self.sequences[seq_name] if abs(
                 fr - frame_id) <= self.frame_involved and fr != frame_id]
+            sampled_framerate = 1
         else:
             sampled_framerate = int(np.random.choice(self.multiframerates, 1))
             options = [fr for fr in self.sequences[seq_name]
