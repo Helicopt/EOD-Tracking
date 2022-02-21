@@ -12,6 +12,7 @@ import numpy as np
 import torch
 import copy
 from easydict import EasyDict
+import pickle as pk
 
 from eod.utils.general.log_helper import default_logger as logger
 from eod.utils.general.registry_factory import DATASET_REGISTRY
@@ -56,6 +57,7 @@ class MultiFrameDataset(CustomDataset):
                  evaluator=None,
                  label_mapping=None,
                  cache=None,
+                 extra_cache=None,
                  clip_box=True,
                  ignore_vis_under=0.0,
                  filter=None,
@@ -77,6 +79,11 @@ class MultiFrameDataset(CustomDataset):
         super(MultiFrameDataset, self).__init__(
             meta_file, image_reader, transformer, num_classes,
             evaluator=evaluator, label_mapping=label_mapping, cache=cache, clip_box=clip_box)
+        if extra_cache is not None:
+            for ecache in extra_cache:
+                with open(ecache, 'rb') as fd:
+                    ecache_data = pk.load(fd)
+                    self.cache_image.update(ecache_data)
         if transformer_noaug is not None:
             for trans in transformer_noaug:
                 if 'kwargs' in trans and trans['kwargs'].get('extra_input', False):
