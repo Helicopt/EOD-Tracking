@@ -300,6 +300,8 @@ class CustomAutoSave(Hook):
     #         logger.info(f'custom saved epoch: {self.cur_epoch}')
 
     def after_eval(self, metrics):
+        if not self.runner_ref().model.training:
+            return
         self.cur_epoch = self.runner_ref().cur_epoch()
         if self.cur_epoch in self.save_epochs:
             self._save_ckpt(f'e{self.cur_epoch}')
