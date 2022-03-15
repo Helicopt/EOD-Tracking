@@ -11,6 +11,7 @@ from eod.utils.general.registry_factory import MODULE_ZOO_REGISTRY
 from eod.utils.env.dist_helper import allreduce, env
 from eod.tasks.det.models.postprocess.roi_supervisor import build_roi_supervisor
 from eod.tasks.det.models.postprocess.roi_predictor import build_roi_predictor
+from ...utils.debug import logger_print
 
 
 __all__ = ['YoloxwIDPostProcess']
@@ -245,3 +246,143 @@ class YoloxwIDPostProcess(nn.Module):
         num_gpus = env.world_size
         ave_normalizer = max(ave_mask.item(), 1) / float(num_gpus)
         return ave_normalizer
+
+
+@MODULE_ZOO_REGISTRY.register('yolox_post_w_id_n_orient')
+class YoloxwIDnOrientPostProcess(YoloxwIDPostProcess):
+
+    def __init__(self,
+                 num_classes,
+                 num_ids,
+                 inplanes,
+                 cfg,
+                 num_orient_class, **kwargs):
+        super().__init__(num_classes,
+                         num_ids,
+                         inplanes,
+                         cfg, **kwargs)
+        self.num_orient_class = num_orient_class
+        self.orient_cls_loss = build_loss(cfg['orient_cls_loss'])
+        self.orient_reg_loss = build_loss(cfg['orient_reg_loss'])
+
+    def apply_activation(self, mlvl_preds):
+        """apply activation on permuted class prediction
+        Arguments:
+            - mlvl_pred (list (levels) of tuple (predictions) of Tensor): first element must
+            be permuted class prediction with last dimension be class dimension
+        """
+        mlvl_activated_preds = []
+        for lvl_idx, preds in enumerate(mlvl_preds):
+            cls_pred = preds[0].sigmoid()
+            obj_pred = preds[3].sigmoid()
+            orient_pred = preds[4].sigmoid()
+            cls_pred *= obj_pred
+            mlvl_activated_preds.append((cls_pred, *preds[1:4], orient_pred, preds[5]))
+        return mlvl_activated_preds
+
+    def get_loss(self, targets, mlvl_preds, mlvl_ori_loc_preds=None, noaug_flag=None):
+        mlvl_cls_pred, mlvl_loc_pred, mlvl_id_pred, mlvl_obj_pred, mlvl_orient_cls_pred, mlvl_orient_reg_pred = zip(
+            *mlvl_preds)
+        cls_pred = torch.cat(mlvl_cls_pred, dim=1)
+        loc_pred = torch.cat(mlvl_loc_pred, dim=1)
+        id_pred = torch.cat(mlvl_id_pred, dim=1)
+        obj_pred = torch.cat(mlvl_obj_pred, dim=1)
+        ocls_pred = torch.cat(mlvl_orient_cls_pred, dim=1)
+        oreg_pred = torch.cat(mlvl_orient_reg_pred, dim=1)
+        if self.use_l1:
+            ori_loc_preds = torch.cat(mlvl_ori_loc_preds, dim=1)
+            del mlvl_ori_loc_preds
+        del mlvl_cls_pred, mlvl_loc_pred, mlvl_id_pred, mlvl_obj_pred
+
+        cls_targets, reg_targets, id_targets, obj_targets, orient_cls_targets, orient_cls_index, orient_reg_targets, ori_reg_targets, fg_masks, num_fgs, valid_id_masks = targets
+        cls_targets = torch.cat(cls_targets, 0)
+        reg_targets = torch.cat(reg_targets, 0)
+        id_targets = torch.cat(id_targets, 0)
+        obj_targets = torch.cat(obj_targets, 0)
+        ocls_targets = torch.cat(orient_cls_targets, 0)
+        ocls_index = torch.cat(orient_cls_index, 0)
+        oreg_targets = torch.cat(orient_reg_targets, 0)
+        if noaug_flag is not None and self.dismiss_aug:
+            valid_id_masks = [(m & o) for m, o in zip(valid_id_masks, noaug_flag)]
+        valid_id_masks = torch.cat(valid_id_masks, 0)
+        if self.use_l1:
+            ori_reg_targets = torch.cat(ori_reg_targets, 0)
+        fg_masks = torch.cat(fg_masks, 0)
+        if self.all_reduce_norm and dist.is_initialized():
+            num_fgs = self.get_ave_normalizer(fg_masks)
+            num_ids = self.get_ave_normalizer(valid_id_masks)
+        else:
+            num_fgs = fg_masks.sum().item()
+            num_ids = valid_id_masks.sum().item()
+        num_fgs = max(num_fgs, 1)
+        num_ids = max(num_ids, 1)
+
+        cls_pred = cls_pred.reshape(-1, self.num_classes - 1)
+        cls_loss = self.cls_loss(cls_pred[fg_masks], cls_targets, normalizer_override=num_fgs)
+        # print(cls_pred[fg_masks].shape, cls_targets.shape)
+        id_pred = id_pred.reshape(-1, self.num_ids)
+        id_loss = self.id_loss(id_pred[fg_masks][valid_id_masks],
+                               id_targets[valid_id_masks][:, 1:], normalizer_override=num_ids)
+        orient_pred = ocls_pred.reshape(-1, self.num_orient_class)
+        orient_reg = oreg_pred.reshape(-1, self.num_orient_class)
+        orient_cls_loss = self.orient_cls_loss(orient_pred[fg_masks][valid_id_masks],
+                                               ocls_targets[valid_id_masks], normalizer_override=num_ids)
+        orient_reg_loss = self.orient_reg_loss(torch.gather(orient_reg[fg_masks][valid_id_masks], 1, ocls_index[valid_id_masks].unsqueeze(1)).flatten(),
+                                               oreg_targets[valid_id_masks], normalizer_override=num_ids)
+        # print(id_pred[fg_masks].shape, id_targets.shape)
+        acc = self.get_acc(cls_pred[fg_masks], cls_targets)
+        acc_id = self.get_acc(id_pred[fg_masks][valid_id_masks], id_targets[valid_id_masks][:, 1:])
+        acc_orient = self.get_acc(orient_pred[fg_masks][valid_id_masks], ocls_targets[valid_id_masks])
+
+        loc_target = reg_targets.reshape(-1, 4)
+        loc_pred = loc_pred.reshape(-1, 4)
+        # loc_preds [xc, yc, w, h] -> [x1, y1, x2, y2]
+        loc_pred_x1 = loc_pred[:, 0] - loc_pred[:, 2] / 2
+        loc_pred_y1 = loc_pred[:, 1] - loc_pred[:, 3] / 2
+        loc_pred_x2 = loc_pred[:, 0] + loc_pred[:, 2] / 2
+        loc_pred_y2 = loc_pred[:, 1] + loc_pred[:, 3] / 2
+        loc_pred = torch.stack([loc_pred_x1, loc_pred_y1, loc_pred_x2, loc_pred_y2], dim=-1)
+        obj_pred = obj_pred.reshape(-1)
+        if loc_pred[fg_masks].numel() > 0:
+            loc_loss = self.loc_loss(loc_pred[fg_masks], loc_target, normalizer_override=num_fgs)
+        else:
+            loc_loss = loc_pred[fg_masks].sum()
+        obj_loss = self.obj_loss(obj_pred, obj_targets, normalizer_override=num_fgs)
+        # add l1 loss
+        if self.use_l1:
+            if ori_loc_preds.numel() > 0:
+                l1_loss = (self.l1_loss(ori_loc_preds.view(-1, 4)[fg_masks], ori_reg_targets)).sum() / num_fgs
+            else:
+                l1_loss = ori_loc_preds.sum()
+        else:
+            l1_loss = torch.tensor(0.0).cuda()
+        lw_id = self.lw_id
+        lw_det = self.lw_det
+        if self.balanced_loss_weight == 'auto':
+            lw_id = torch.exp(-lw_id)
+            lw_det = torch.exp(-lw_det)
+            return {
+                self.prefix + '.cls_loss': cls_loss * lw_det,
+                self.prefix + '.loc_loss': loc_loss * lw_det,
+                self.prefix + '.id_loss': id_loss * lw_id,
+                self.prefix + '.orient_cls_loss': orient_cls_loss,
+                self.prefix + '.orient_reg_loss': orient_reg_loss,
+                self.prefix + '.obj_loss': obj_loss * lw_det,
+                self.prefix + '.l1_loss': l1_loss * lw_det,
+                self.prefix + '.lwnorm_loss': (self.lw_id + self.lw_det) * self.balance_scale,
+                self.prefix + '.accuracy': acc,
+                self.prefix + '.accuracy_id': acc_id,
+                self.prefix + '.accuracy_orient': acc_orient,
+            }
+        return {
+            self.prefix + '.cls_loss': cls_loss,
+            self.prefix + '.loc_loss': loc_loss,
+            self.prefix + '.id_loss': id_loss,
+            self.prefix + '.orient_cls_loss': orient_cls_loss,
+            self.prefix + '.orient_reg_loss': orient_reg_loss,
+            self.prefix + '.obj_loss': obj_loss,
+            self.prefix + '.l1_loss': l1_loss,
+            self.prefix + '.accuracy': acc,
+            self.prefix + '.accuracy_id': acc_id,
+            self.prefix + '.accuracy_orient': acc_orient,
+        }

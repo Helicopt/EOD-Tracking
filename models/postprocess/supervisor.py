@@ -19,13 +19,14 @@ __all__ = ['OTAwIDSupervisor', 'OTAwIDMatcher', 'ATSSwIDSupervisor']
 
 @ROI_SUPERVISOR_REGISTRY.register('ota_w_id')
 class OTAwIDSupervisor(object):
-    def __init__(self, num_classes, num_ids, matcher, norm_on_bbox=False, return_gts=False):
+    def __init__(self, num_classes, num_ids, matcher, num_orient_class=0, norm_on_bbox=False, return_gts=False):
         self.matcher = build_matcher(matcher)
         self.norm_on_bbox = norm_on_bbox
         self.return_gts = return_gts
         self.center_sample = True
         self.num_classes = num_classes - 1  # 80
         self.num_ids = num_ids
+        self.num_orient_class = num_orient_class
 
     def get_l1_target(self, gts_xyxy, points_stride, strides, eps=1e-8):
         gts = gts_xyxy.clone()
@@ -49,6 +50,9 @@ class OTAwIDSupervisor(object):
         id_targets = []
         reg_targets = []
         obj_targets = []
+        ocls_targets = []
+        ocls_indices = []
+        oreg_targets = []
         ori_reg_targets = []
         fg_masks = []
         valid_id_masks = []
@@ -77,7 +81,7 @@ class OTAwIDSupervisor(object):
             if gts.shape[0] > 0:
                 try:
                     img_size = input['image_info'][b_ix][:2]
-                    num_fg, gt_matched_classes, gt_matched_ids, pred_ious_this_matching, matched_gt_inds, fg_mask, expanded_strides = \
+                    num_fg, gt_matched_classes, gt_matched_ids, gt_matched_orient, pred_ious_this_matching, matched_gt_inds, fg_mask, expanded_strides = \
                         self.matcher.match(gts, preds, points, num_points_per_level, strides, img_size=img_size)
                 except RuntimeError:
                     logger.info(
@@ -86,7 +90,7 @@ class OTAwIDSupervisor(object):
                            try to reduce the batch size or image size."
                     )
                     torch.cuda.empty_cache()
-                    num_fg, gt_matched_classes, gt_matched_ids, pred_ious_this_matching, matched_gt_inds, fg_mask, expanded_strides = \
+                    num_fg, gt_matched_classes, gt_matched_ids, gt_matched_orient, pred_ious_this_matching, matched_gt_inds, fg_mask, expanded_strides = \
                         self.matcher.match(gts, preds, points, num_points_per_level, strides, mode='cpu')
                 torch.cuda.empty_cache()
                 if num_fg == 0:
@@ -96,8 +100,20 @@ class OTAwIDSupervisor(object):
                         (gt_matched_classes - 1).to(torch.int64), self.num_classes
                     ) * pred_ious_this_matching.unsqueeze(-1)
                     valid_id_mask = gt_matched_ids > 0
+                    if self.num_orient_class > 0:
+                        valid_id_mask = valid_id_mask & (gt_matched_orient >= 0)
+                        gt_matched_orient[gt_matched_orient < 0] = 0
                     id_target = F.one_hot((gt_matched_ids).to(torch.int64), self.num_ids + 1) * \
                         pred_ious_this_matching.unsqueeze(-1)
+                    if self.num_orient_class > 0:
+                        ocls_index = (gt_matched_orient).to(torch.int64)
+                        ocls_target = F.one_hot(ocls_index, self.num_orient_class) * \
+                            pred_ious_this_matching.unsqueeze(-1)
+                        oreg_target = gts[matched_gt_inds, 7]
+                    else:
+                        ocls_index = None
+                        ocls_target = None
+                        oreg_target = None
                     reg_target = gts[matched_gt_inds, :4]
                     obj_target = fg_mask.unsqueeze(-1)
                     l1_target = self.get_l1_target(gts[matched_gt_inds, :4],
@@ -113,6 +129,9 @@ class OTAwIDSupervisor(object):
                 reg_target = preds.new_zeros((0, 4))
                 obj_target = preds.new_zeros((fg_mask.shape[0], 1)).to(torch.bool)
                 l1_target = preds.new_zeros((0, 4))
+                ocls_target = preds.new_zeros((0, self.num_orient_class))
+                ocls_index = preds.new_zeros((0,), dtype=torch.int64)
+                oreg_target = preds.new_zeros((0,))
 
             cls_targets.append(cls_target)
             id_targets.append(id_target)
@@ -121,18 +140,25 @@ class OTAwIDSupervisor(object):
             ori_reg_targets.append(l1_target)
             fg_masks.append(fg_mask)
             valid_id_masks.append(valid_id_mask)
-
-        return cls_targets, reg_targets, id_targets, obj_targets, ori_reg_targets, fg_masks, num_fgs, valid_id_masks
+            if self.num_orient_class > 0:
+                ocls_targets.append(ocls_target)
+                ocls_indices.append(ocls_index)
+                oreg_targets.append(oreg_target)
+        if self.num_orient_class == 0:
+            return cls_targets, reg_targets, id_targets, obj_targets, ori_reg_targets, fg_masks, num_fgs, valid_id_masks
+        else:
+            return cls_targets, reg_targets, id_targets, obj_targets, ocls_targets, ocls_indices, oreg_targets, ori_reg_targets, fg_masks, num_fgs, valid_id_masks
 
 
 @MATCHER_REGISTRY.register('ota_w_id')
 class OTAwIDMatcher(object):
-    def __init__(self, num_classes, center_sample=True, pos_radius=1, candidate_k=10, radius=2.5):
+    def __init__(self, num_classes, num_orient_class=0, center_sample=True, pos_radius=1, candidate_k=10, radius=2.5):
         self.pos_radius = pos_radius
         self.center_sample = center_sample
         self.num_classes = num_classes - 1  # 80
         self.candidate_k = candidate_k
         self.radius = radius
+        self.num_orient_class = num_orient_class
 
     @torch.no_grad()
     def match(self, gts, preds, points, num_points_per_level, strides, mode='cuda', img_size=[]):
@@ -148,6 +174,10 @@ class OTAwIDMatcher(object):
         gt_labels = gts[:, 4]   # [G, 1]
         gt_bboxes = gts[:, :4]  # [G, 4]
         gt_ids = gts[:, 5]
+        if self.num_orient_class > 0:
+            gt_orient = gts[:, 6]
+        else:
+            gt_orient = None
 
         if self.center_sample:
             fg_mask, is_in_boxes_and_center, expanded_strides = self.get_sample_region(
@@ -201,19 +231,20 @@ class OTAwIDMatcher(object):
             + 100000.0 * (~is_in_boxes_and_center)
         )
 
-        (num_fg, gt_matched_classes, gt_matched_ids, pred_ious_this_matching, matched_gt_inds
-         ) = self.dynamic_k_matching(cost, pair_wise_ious, gt_labels, gt_ids, G, fg_mask)
+        (num_fg, gt_matched_classes, gt_matched_ids, gt_matched_orient, pred_ious_this_matching, matched_gt_inds
+         ) = self.dynamic_k_matching(cost, pair_wise_ious, gt_labels, gt_ids, gt_orient, G, fg_mask)
         del pair_wise_cls_loss, cost, pair_wise_ious, pair_wise_ious_loss
 
         if mode == "cpu":
             gt_matched_classes = gt_matched_classes.cuda()
             gt_matched_ids = gt_matched_ids.cuda()
+            gt_matched_orient = gt_matched_orient.cuda() if gt_matched_orient is not None else None
             fg_mask = fg_mask.cuda()
             pred_ious_this_matching = pred_ious_this_matching.cuda()
             matched_gt_inds = matched_gt_inds.cuda()
             expanded_strides = expanded_strides.cuda()
 
-        return num_fg, gt_matched_classes, gt_matched_ids, pred_ious_this_matching, matched_gt_inds, fg_mask, expanded_strides
+        return num_fg, gt_matched_classes, gt_matched_ids, gt_matched_orient, pred_ious_this_matching, matched_gt_inds, fg_mask, expanded_strides
 
     def get_sample_region(self, gt_bboxes, strides, points, num_points_per_level, img_size):
         G = gt_bboxes.shape[0]  # num_gts
@@ -273,7 +304,7 @@ class OTAwIDMatcher(object):
         )
         return is_in_boxes_anchor, is_in_boxes_and_center, expanded_strides
 
-    def dynamic_k_matching(self, cost, pair_wise_ious, gt_classes, gt_ids, num_gt, fg_mask):
+    def dynamic_k_matching(self, cost, pair_wise_ious, gt_classes, gt_ids, gt_orient, num_gt, fg_mask):
         matching_matrix = torch.zeros_like(cost)  # [G, A']
 
         ious_in_boxes_matrix = pair_wise_ious    # [G, A']
@@ -301,10 +332,14 @@ class OTAwIDMatcher(object):
         matched_gt_inds = matching_matrix[:, fg_mask_inboxes].argmax(0)
         gt_matched_classes = gt_classes[matched_gt_inds]
         gt_matched_ids = gt_ids[matched_gt_inds]
+        if self.num_orient_class > 0:
+            gt_matched_orient = gt_orient[matched_gt_inds]
+        else:
+            gt_matched_orient = None
 
         pred_ious_this_matching = (matching_matrix * pair_wise_ious).sum(0)[fg_mask_inboxes]
 
-        return num_fg, gt_matched_classes, gt_matched_ids, pred_ious_this_matching, matched_gt_inds
+        return num_fg, gt_matched_classes, gt_matched_ids, gt_matched_orient, pred_ious_this_matching, matched_gt_inds
 
 
 @ROI_SUPERVISOR_REGISTRY.register('atss_w_id')

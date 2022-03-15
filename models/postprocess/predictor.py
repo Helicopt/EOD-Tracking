@@ -1,5 +1,6 @@
 # Import from third library
 import torch
+import torch.nn.functional as F
 from eod.tasks.det.models.utils.nms_wrapper import nms
 from eod.tasks.det.models.utils.bbox_helper import (
     clip_bbox,
@@ -14,6 +15,10 @@ from ...utils.debug import info_debug, get_debugger
 __all__ = ['RoiwIDPredictor', 'YoloXwIDPredictor', 'RetinawIDMerger']
 
 
+def predict_orientation(orient_cls, orient_reg):
+    pass
+
+
 @ROI_PREDICTOR_REGISTRY.register('base_w_id')
 class RoiwIDPredictor(object):
     """Predictor for the first stage
@@ -24,6 +29,7 @@ class RoiwIDPredictor(object):
                  pre_nms_top_n,
                  post_nms_top_n,
                  roi_min_size,
+                 pred_orient=False,
                  merger=None,
                  nms=None,
                  clip_box=True):
@@ -34,6 +40,7 @@ class RoiwIDPredictor(object):
         self.nms_cfg = nms
         self.roi_min_size = roi_min_size
         self.clip_box = clip_box
+        self.pred_orient = pred_orient
         if merger is not None:
             self.merger = build_merger(merger)
         else:
@@ -82,6 +89,8 @@ class RoiwIDPredictor(object):
 
         rois = self.regression(anchors, preds, image_info)
         cls_pred = preds[0]
+        if self.pred_orient:
+            orient_pred = predict_orientation(preds[4], preds[5])
         B, K, C = cls_pred.shape
         roi_min_size = self.roi_min_size
         pre_nms_top_n = self.pre_nms_top_n
@@ -95,6 +104,7 @@ class RoiwIDPredictor(object):
 
         batch_rois = []
         batch_id_feats = []
+        batch_orient_preds = []
         for b_ix in range(B):
             # clip rois and filter rois which are too small
             image_rois = rois[b_ix]
@@ -103,6 +113,8 @@ class RoiwIDPredictor(object):
             image_rois, filter_inds = filter_by_size(image_rois, roi_min_size)
             image_cls_pred = cls_pred[b_ix][filter_inds]
             id_feats = id_features[b_ix][filter_inds]
+            if self.pred_orient:
+                image_orient_pred = orient_pred[b_ix][filter_inds]
             if image_rois.numel() == 0:
                 continue  # noqa E701
 
@@ -119,29 +131,43 @@ class RoiwIDPredictor(object):
                     cls_rois = cls_rois[keep_idx]
                     scores = scores[keep_idx]
                     id_feats_cls = id_feats_cls[keep_idx]
+                    if self.pred_orient:
+                        orient_pred_result = image_orient_pred[keep_idx]
 
                 # do nms per image, only one class
                 _pre_nms_top_n = min(pre_nms_top_n, scores.shape[0])
                 scores, order = scores.topk(_pre_nms_top_n, sorted=True)
                 cls_rois = cls_rois[order, :]
                 id_feats_cls = id_feats_cls[order, :]
+                if self.pred_orient:
+                    orient_pred_result = orient_pred_result[order, :]
                 cls_rois = torch.cat([cls_rois, scores[:, None]], dim=1)
 
                 if self.nms_cfg is not None:
                     cls_rois, keep_idx = nms(cls_rois, self.nms_cfg)
                     id_feats_cls = id_feats_cls[keep_idx]
+                    if self.pred_orient:
+                        orient_pred_result = orient_pred_result[keep_idx]
                 if post_nms_top_n > 0:
                     cls_rois = cls_rois[:post_nms_top_n]
                     id_feats_cls = id_feats_cls[:post_nms_top_n]
+                    if self.pred_orient:
+                        orient_pred_result = orient_pred_result[:post_nms_top_n]
 
                 ix = cls_rois.new_full((cls_rois.shape[0], 1), b_ix)
                 c = cls_rois.new_full((cls_rois.shape[0], 1), cls + 1)
                 cls_rois = torch.cat([ix, cls_rois, c], dim=1)
                 batch_rois.append(cls_rois)
                 batch_id_feats.append(id_feats_cls)
+                if self.pred_orient:
+                    batch_orient_preds.append(orient_pred_result)
 
         if len(batch_rois) == 0:
+            if self.pred_orient:
+                return anchors.new_zeros((1, 7)), anchors.new_zeros((1, 256)), anchors.new_zeros((1,))
             return anchors.new_zeros((1, 7)), anchors.new_zeros((1, 256))
+        if self.pred_orient:
+            return torch.cat(batch_rois, dim=0), torch.cat(batch_id_feats, dim=0), torch.cat(batch_orient_preds)
         return torch.cat(batch_rois, dim=0), torch.cat(batch_id_feats, dim=0)
 
     def lvl_nms(self, anchors, preds, image_info, preserved=800):
@@ -298,17 +324,23 @@ class RetinawIDMerger(object):
 
 @ROI_PREDICTOR_REGISTRY.register('yolox_w_id')
 class YoloXwIDPredictor(object):
-    def __init__(self, num_classes, pre_nms_score_thresh, nms):
+    def __init__(self, num_classes, pre_nms_score_thresh, nms, pred_orient=False):
         self.pre_nms_score_thresh = pre_nms_score_thresh
         self.nms_cfg = nms
         self.top_n = 300
         self.num_classes = num_classes - 1
+        self.pred_orient = pred_orient
 
     @torch.no_grad()
     def predict(self, preds, id_features):
+        # id_features = self.fuse_lvl_features(id_features)
         id_features = [id_feat.permute(0, 2, 3, 1).reshape(id_feat.size(
             0), id_feat.size(2) * id_feat.size(3), -1) for id_feat in id_features]
         preds = [(p[0], p[1], p[3]) for p in preds]
+        if self.pred_orient:
+            orient_preds = predict_orientation(
+                torch.cat([p[4] for p in preds], dim=1),
+                torch.cat([p[5] for p in preds], dim=1))
         max_wh = 4096
         preds = [torch.cat(p, dim=2) for p in preds]
         preds = torch.cat(preds, dim=1)
@@ -325,16 +357,21 @@ class YoloXwIDPredictor(object):
         B = preds.shape[0]
         det_results = []
         id_feats_all = []
+        orient_all = []
         # debugger = get_debugger()
         for b_ix in range(B):
             pred_per_img = preds[b_ix]
             class_conf, class_pred = torch.max(pred_per_img[:, :self.num_classes], 1, keepdim=True)
             id_feats_per_img = id_features[b_ix]
+            if self.pred_orient:
+                orient_per_img = orient_preds[b_ix]
             # debugger(class_conf, 'conf')
             conf_mask = (class_conf.squeeze() >= self.pre_nms_score_thresh).squeeze()
             detections = torch.cat((pred_per_img[:, self.num_classes:-1], class_conf, class_pred.float()), 1)
             detections = detections[conf_mask]
             id_feats = id_feats_per_img[conf_mask]
+            if self.pred_orient:
+                orients = orient_per_img[conf_mask]
             if not detections.size(0):
                 continue
 
@@ -348,6 +385,8 @@ class YoloXwIDPredictor(object):
 
             rois_keep = detections[keep]
             id_feats_keep = id_feats[keep]
+            if self.pred_orient:
+                orients_keep = orients[keep]
 
             rois_keep[:, -1] = rois_keep[:, -1] + 1
 
@@ -359,14 +398,25 @@ class YoloXwIDPredictor(object):
             if n > self.top_n:
                 rois_keep = rois_keep[:self.top_n]
                 id_feats_keep = id_feats_keep[:self.top_n]
+                if self.pred_orient:
+                    orients_keep = orients[:self.top_n]
 
             det_results.append(torch.cat([rois_keep.new_full((rois_keep.shape[0], 1), b_ix), rois_keep], dim=1))
             id_feats_all.append(id_feats_keep)
+            if self.pred_orient:
+                orient_all.append(orients_keep)
         if len(det_results) == 0:
             det_results.append(preds.new_zeros((1, 7)))
-            id_feats_all.append(preds.new_zeros((1, 256)))
+            id_feats_all.append(preds.new_zeros((1, 111)))
+            if self.pred_orient:
+                orient_all.append(preds.new_zeros((1,)))
         bboxes = torch.cat(det_results, dim=0)
+        bboxes = bboxes[:, :7]
         id_embeds = torch.cat(id_feats_all, dim=0)
+        if self.pred_orient:
+            orientations = torch.cat(orient_all, dim=0)
+        if self.pred_orient:
+            return {'dt_bboxes': bboxes, 'id_embeds': id_embeds, 'orientations': orientations}
         return {'dt_bboxes': bboxes, 'id_embeds': id_embeds}
 
     def lvl_nms(self, preds, preserved=800):

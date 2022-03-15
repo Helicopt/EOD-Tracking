@@ -19,7 +19,7 @@ from ..mot_module_wrapper import DualModuleWrapper
 from ...utils.debug import info_debug
 
 
-__all__ = ['YoloXHeadwID', 'YoloXHeadwIDLessShare', 'YoloXHeadwIDShare']
+__all__ = ['YoloXHeadwID', 'YoloXHeadwIDnOrient', 'YoloXHeadwIDLessShare', 'YoloXHeadwIDShare']
 
 
 class SE_Block(nn.Module):
@@ -337,6 +337,147 @@ class YoloXHeadwID(nn.Module):
 
     def get_outplanes(self):
         return copy.copy(self.out_planes)
+
+
+@MODULE_ZOO_REGISTRY.register('YoloXHeadwIDnOrient')
+class YoloXHeadwIDnOrient(YoloXHeadwID):
+    def __init__(self, *args,
+                 num_orient_class=8,
+                 inplanes=[256, 512, 1024],
+                 outplanes=256,
+                 act_fn={'type': 'Silu'},
+                 depthwise=False,
+                 initializer=None,
+                 class_activation='sigmoid',
+                 normalize={'type': 'solo_bn'},
+                 **kwargs):
+        super(YoloXHeadwIDnOrient, self).__init__(*args, inplanes=inplanes, outplanes=outplanes,
+                                                  act_fn=act_fn, depthwise=depthwise, initializer=initializer,
+                                                  class_activation=class_activation, normalize=normalize, **kwargs)
+        self.num_orient_class = num_orient_class
+        Conv = DWConv if depthwise else ConvBnAct
+        self.orient_cls_convs = nn.ModuleList()
+        self.orient_reg_convs = nn.ModuleList()
+        self.orient_cls_preds = nn.ModuleList()
+        self.orient_reg_preds = nn.ModuleList()
+        for i in range(self.num_levels):
+            inplane = int(inplanes[i])
+            outplane = self.out_planes[i]
+            self.orient_cls_convs.append(
+                nn.Sequential(
+                    *[
+                        Conv(
+                            outplane,
+                            outplane,
+                            kernel_size=3,
+                            stride=1,
+                            act_fn=act_fn,
+                            normalize=normalize
+                        ),
+                        Conv(
+                            outplane,
+                            outplane,
+                            kernel_size=3,
+                            stride=1,
+                            act_fn=act_fn,
+                            normalize=normalize
+                        ),
+                    ]
+                )
+            )
+            self.orient_reg_convs.append(
+                nn.Sequential(
+                    *[
+                        Conv(
+                            outplane,
+                            outplane,
+                            kernel_size=3,
+                            stride=1,
+                            act_fn=act_fn,
+                            normalize=normalize
+                        ),
+                        Conv(
+                            outplane,
+                            outplane,
+                            kernel_size=3,
+                            stride=1,
+                            act_fn=act_fn,
+                            normalize=normalize
+                        ),
+                    ]
+                )
+            )
+            self.orient_cls_preds.append(
+                nn.Conv2d(
+                    in_channels=outplane,
+                    out_channels=self.num_point * self.num_orient_class,
+                    kernel_size=1,
+                    stride=1,
+                    padding=0,
+                )
+            )
+            self.orient_reg_preds.append(
+                nn.Conv2d(
+                    in_channels=outplane,
+                    out_channels=self.num_point * self.num_orient_class,
+                    kernel_size=1,
+                    stride=1,
+                    padding=0,
+                )
+            )
+        prior_prob = 0.01
+        for conv in self.orient_cls_preds:
+            b = conv.bias.view(self.num_point, -1)
+            b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
+            conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
+
+    def forward_net(self, features, idx=0):
+        mlvl_preds = []
+        mlvl_roi_features = []
+        stems = []
+        for i in range(self.num_levels):
+            feat = self.stems[i](features[i])
+            stems.append(feat)
+            cls_feat = self.cls_convs[i](feat)
+            loc_feat = self.reg_convs[i](feat)
+            orient_cls_feat = self.orient_cls_convs[i](feat)
+            orient_reg_feat = self.orient_reg_convs[i](feat)
+            if not self.fuse_id_lvls:
+                id_feat = self.id_convs[i](feat)
+                if self.se_block > 0:
+                    id_feat = self.id_se(id_feat)
+                if self.normalize_id:
+                    id_feat_norm = F.normalize(id_feat, dim=1) * self.emb_scale
+                else:
+                    id_feat_norm = id_feat
+                id_pred = self.id_preds(id_feat_norm)
+            else:
+                id_feat = None
+                id_pred = None
+            cls_pred = self.cls_preds[i](cls_feat)
+            loc_pred = self.reg_preds[i](loc_feat)
+            orient_cls_pred = self.orient_cls_preds[i](orient_cls_feat)
+            orient_reg_pred = self.orient_reg_preds[i](orient_reg_feat)
+            obj_pred = self.obj_preds[i](loc_feat)
+            mlvl_preds.append([cls_pred, loc_pred, id_pred, obj_pred, orient_cls_pred, orient_reg_pred])
+            mlvl_roi_features.append([cls_feat, loc_feat, id_feat])
+        if self.fuse_id_lvls:
+            id_feats = self.fuse_features(stems)
+            for i in range(self.num_levels):
+                id_feat = self.id_convs(id_feats[i])
+                if self.se_block > 0:
+                    id_feat = self.id_se(id_feat)
+                if self.normalize_id:
+                    id_feat_norm = F.normalize(id_feat, dim=1) * self.emb_scale
+                else:
+                    id_feat_norm = id_feat
+                id_pred = self.id_preds(id_feat_norm)
+                mlvl_roi_features[i][2] = id_feat
+                mlvl_preds[i][2] = id_pred
+                mlvl_roi_features[i] = tuple(mlvl_roi_features[i])
+                mlvl_preds[i] = tuple(mlvl_preds[i])
+
+        return mlvl_preds, mlvl_roi_features
 
 
 @MODULE_ZOO_REGISTRY.register('YoloXHeadwIDLessShare')

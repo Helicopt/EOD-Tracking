@@ -52,6 +52,9 @@ class MultiFrameDataset(CustomDataset):
                  add_self=False,
                  random_select=True,
                  repeat_to=None,
+                 orientation=0,
+                 orient_div=8,
+                 orient_thr=0.2,
                  test_mode=False,
                  online=False,
                  evaluator=None,
@@ -72,6 +75,9 @@ class MultiFrameDataset(CustomDataset):
         self.add_self = add_self
         self.random_select = random_select
         self.repeat_num = repeat_to
+        self.use_orientation = orientation
+        self.orient_div = orient_div
+        self.orient_thr = orient_thr
         self.online = online
         self.ignore_vis_under = ignore_vis_under
         self.multiframerates = multiframerates
@@ -105,6 +111,27 @@ class MultiFrameDataset(CustomDataset):
             seq_name = os.path.splitext(os.path.basename(filename))[0]
             frame_id = 0
         return seq_name, frame_id
+
+    def get_orient(self, ins_a, ins_b):
+        ax1, ay1, ax2, ay2 = ins_a['bbox']
+        bx1, by1, bx2, by2 = ins_b['bbox']
+        dx = ((bx1 + bx2) - (ax1 + ax2)) / 2.
+        dy = ((by1 + by2) - (ay1 + ay2)) / 2.
+        scale = ((ax2 - ax1) * (ay2 - ay1)) ** 0.5
+        dx /= scale
+        dy /= scale
+        s = (dx**2 + dy**2)**0.5
+        if s > self.orient_thr:
+            ang = math.acos(dx / s)
+            if dy < 0:
+                ang = math.pi * 2 - ang
+            sector = math.pi * 2 / self.orient_div
+            ocls = round(ang / sector)
+            oreg = (ang - ocls * sector) / sector
+            ocls = ocls % self.orient_div
+            return ocls, oreg
+        else:
+            return -1, 0
 
     def _normal_init(self):
         self.sequences = {}
@@ -151,10 +178,43 @@ class MultiFrameDataset(CustomDataset):
         self.seq_controls = {}
         for seq in self.sequences:
             frs = list(self.sequences[seq].keys())
+            be = min(frs)
+            en = max(frs)
             self.seq_controls[seq] = {
-                'begin': min(frs),
-                'end': max(frs),
+                'begin': be,
+                'end': en,
             }
+            if self.use_orientation:
+                for fr in range(be, en + 1):
+                    frame_data = self.metas[self.sequences[seq][fr]]
+                    for instance in frame_data['instances']:
+                        instance['orient_cls'] = -1
+                        instance['orient_reg'] = 0.
+                    if fr + self.use_orientation <= en:
+                        nxt_frame_data = self.metas[self.sequences[seq][fr + self.use_orientation]]
+                        def sort_key_cur(x): return frame_data['instances'][x]['track_id']
+                        def sort_key_nxt(x): return nxt_frame_data['instances'][x]['track_id']
+                        n = len(frame_data['instances'])
+                        m = len(nxt_frame_data['instances'])
+                        cur_ids = sorted(list(range(n)), key=sort_key_cur)
+                        nxt_ids = sorted(list(range(m)), key=sort_key_nxt)
+                        i = 0
+                        j = 0
+                        while i < n and j < m:
+                            ins_i = frame_data['instances'][cur_ids[i]]
+                            ii = ins_i['track_id']
+                            ins_j = nxt_frame_data['instances'][nxt_ids[j]]
+                            jj = ins_j['track_id']
+                            if ii <= 0 or ii < jj:
+                                i += 1
+                            elif jj <= 0 or jj < ii:
+                                j += 1
+                            else:
+                                ocls, oreg = self.get_orient(ins_i, ins_j)
+                                instance['orient_cls'] = ocls
+                                instance['orient_reg'] = oreg
+                                i += 1
+                                j += 1
         if not self.test_mode:
             assert self.num_ids is None or self.id_cnt < self.num_ids, 'num_ids in config is less than actual id_cnt loaded'
         logger.info('---- %d items in total, %d IDs' % (len(self.metas), self.id_cnt))
@@ -181,7 +241,11 @@ class MultiFrameDataset(CustomDataset):
             if instance['is_ignored']:
                 ig_bboxes.append(instance['bbox'])
             else:
-                gt_bboxes.append(instance['bbox'] + [instance['label'], instance['track_id']])
+                data_ins = instance['bbox'] + [instance['label'], instance['track_id']]
+                if self.use_orientation:
+                    data_ins.append(instance['orient_cls'])
+                    data_ins.append(instance['orient_reg'])
+                gt_bboxes.append(data_ins)
 
         if len(ig_bboxes) == 0:
             ig_bboxes = self._fake_zero_data(1, 4)
