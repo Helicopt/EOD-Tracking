@@ -211,8 +211,8 @@ class MultiFrameDataset(CustomDataset):
                                 j += 1
                             else:
                                 ocls, oreg = self.get_orient(ins_i, ins_j)
-                                instance['orient_cls'] = ocls
-                                instance['orient_reg'] = oreg
+                                ins_i['orient_cls'] = ocls
+                                ins_i['orient_reg'] = oreg
                                 i += 1
                                 j += 1
         if not self.test_mode:
