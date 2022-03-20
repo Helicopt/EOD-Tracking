@@ -7,10 +7,11 @@ from ..basetrack import BaseTrack, ByteTrackState
 class STrack(BaseTrack):
     shared_kalman = KalmanFilter()
 
-    def __init__(self, tlwh, score, label):
+    def __init__(self, tlwh, score, label, embed=None):
 
         # wait activate
         self._tlwh = np.asarray(tlwh, dtype=np.float)
+        self._embed = embed
         self.kalman_filter = None
         self.mean, self.covariance = None, None
         self.is_activated = False
@@ -65,7 +66,7 @@ class STrack(BaseTrack):
             self.track_id = self.next_id()
         self.score = new_track.score
 
-    def update(self, new_track, frame_id):
+    def update(self, new_track, frame_id, force=False):
         """
         Update a matched track
         :type new_track: STrack
@@ -77,8 +78,11 @@ class STrack(BaseTrack):
         self.tracklet_len += 1
 
         new_tlwh = new_track.tlwh
+        new_tlwh = self.tlwh_to_xyah(new_tlwh)
         self.mean, self.covariance = self.kalman_filter.update(
-            self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh))
+            self.mean, self.covariance, new_tlwh)
+        if force:
+            self.mean = np.concatenate([new_tlwh, self.mean[4:]])
         self.state = ByteTrackState.Tracked
         self.is_activated = True
 

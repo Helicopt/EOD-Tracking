@@ -10,13 +10,20 @@ from eod.tasks.det.models.utils.bbox_helper import (
 from eod.utils.general.registry_factory import ROI_MERGER_REGISTRY, ROI_PREDICTOR_REGISTRY
 from eod.tasks.det.models.postprocess.roi_predictor import build_merger
 from eod.utils.general.fp16_helper import to_float32
-from ...utils.debug import info_debug, get_debugger
+from ...utils.debug import info_debug, get_debugger, logger_print
+import math
 
 __all__ = ['RoiwIDPredictor', 'YoloXwIDPredictor', 'RetinawIDMerger']
 
 
+@torch.no_grad()
 def predict_orientation(orient_cls, orient_reg):
-    pass
+    B, N, DIV = orient_cls.shape
+    cls_score, cls_ind = orient_cls.max(dim=2)
+    regs = torch.gather(orient_reg, 2, cls_ind.unsqueeze(2)).squeeze(2)
+    angles = (cls_ind.float() + regs) * math.pi * 2 / DIV
+    # angles[angles < 0] += math.pi * 2
+    return angles
 
 
 @ROI_PREDICTOR_REGISTRY.register('base_w_id')
@@ -336,11 +343,11 @@ class YoloXwIDPredictor(object):
         # id_features = self.fuse_lvl_features(id_features)
         id_features = [id_feat.permute(0, 2, 3, 1).reshape(id_feat.size(
             0), id_feat.size(2) * id_feat.size(3), -1) for id_feat in id_features]
-        preds = [(p[0], p[1], p[3]) for p in preds]
         if self.pred_orient:
             orient_preds = predict_orientation(
                 torch.cat([p[4] for p in preds], dim=1),
                 torch.cat([p[5] for p in preds], dim=1))
+        preds = [(p[0], p[1], p[3]) for p in preds]
         max_wh = 4096
         preds = [torch.cat(p, dim=2) for p in preds]
         preds = torch.cat(preds, dim=1)
@@ -414,7 +421,7 @@ class YoloXwIDPredictor(object):
         bboxes = bboxes[:, :7]
         id_embeds = torch.cat(id_feats_all, dim=0)
         if self.pred_orient:
-            orientations = torch.cat(orient_all, dim=0)
+            orientations = torch.cat(orient_all, dim=0).reshape(-1, 1)
         if self.pred_orient:
             return {'dt_bboxes': bboxes, 'id_embeds': id_embeds, 'orientations': orientations}
         return {'dt_bboxes': bboxes, 'id_embeds': id_embeds}
