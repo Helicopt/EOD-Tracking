@@ -19,9 +19,10 @@ __all__ = ['MOTModelHelper']
 @MODEL_HELPER_REGISTRY.register('mot')
 class MOTModelHelper(ModelHelper):
 
-    def __init__(self, cfg, nonref=False, **kwargs):
+    def __init__(self, cfg, nonref=False, keep_ref_image=False, **kwargs):
         super().__init__(cfg, **kwargs)
         self.nonref = nonref
+        self.keep_ref_image = keep_ref_image
 
     def forward(self, input):
         """
@@ -47,6 +48,8 @@ class MOTModelHelper(ModelHelper):
                 for u, v in zip(input['ref'], output['ref']):
                     if not ('ref_cache' in input and input['ref_cache'][0]):
                         kept_keys = ['strides', 'gt_bboxes', 'image_info']
+                        if self.keep_ref_image:
+                            kept_keys.append('image')
                         kept_dict = {k: u[k] for k in kept_keys if k in u}
                     else:
                         kept_dict = dict(u)

@@ -19,7 +19,7 @@ from ..mot_module_wrapper import DualModuleWrapper
 from ...utils.debug import info_debug
 
 
-__all__ = ['YoloXHeadwID', 'YoloXHeadwIDnOrient', 'YoloXHeadwIDLessShare', 'YoloXHeadwIDShare']
+__all__ = ['YoloXHeadwID', 'YoloXHeadwIDnOrient', 'YoloXOrientHead', 'YoloXHeadwIDLessShare', 'YoloXHeadwIDShare']
 
 
 class SE_Block(nn.Module):
@@ -478,6 +478,143 @@ class YoloXHeadwIDnOrient(YoloXHeadwID):
                 mlvl_preds[i] = tuple(mlvl_preds[i])
 
         return mlvl_preds, mlvl_roi_features
+
+
+@MODULE_ZOO_REGISTRY.register('YoloXOrientHead')
+class YoloXOrientHead(nn.Module):
+
+    def __init__(self,
+                 num_orient_class=8,
+                 num_point=1,
+                 width=0.375,
+                 inplanes=[256, 512, 1024],
+                 outplanes=256,
+                 act_fn={'type': 'Silu'},
+                 depthwise=False,
+                 initializer=None,
+                 class_activation='sigmoid',
+                 normalize={'type': 'solo_bn'},
+                 init_prior=0.01,
+                 **kwargs):
+        super().__init__()
+        self.num_orient_class = num_orient_class
+        self.prefix = self.__class__.__name__
+        self.num_levels = len(inplanes)
+        self.num_point = num_point
+        Conv = DWConv if depthwise else ConvBnAct
+        self.orient_cls_convs = nn.ModuleList()
+        self.orient_reg_convs = nn.ModuleList()
+        self.orient_cls_preds = nn.ModuleList()
+        self.orient_reg_preds = nn.ModuleList()
+        self.stems = nn.ModuleList()
+        self.out_planes = []
+        for i in range(self.num_levels):
+            inplane = int(inplanes[i])
+            outplane = int(outplanes * width)
+            self.out_planes.append(outplane)
+            self.stems.append(
+                ConvBnAct(
+                    inplane,
+                    outplane,
+                    kernel_size=1,
+                    stride=1,
+                    act_fn=act_fn,
+                    normalize=normalize
+                )
+            )
+            self.orient_cls_convs.append(
+                nn.Sequential(
+                    *[
+                        Conv(
+                            outplane,
+                            outplane,
+                            kernel_size=3,
+                            stride=1,
+                            act_fn=act_fn,
+                            normalize=normalize
+                        ),
+                        Conv(
+                            outplane,
+                            outplane,
+                            kernel_size=3,
+                            stride=1,
+                            act_fn=act_fn,
+                            normalize=normalize
+                        ),
+                    ]
+                )
+            )
+            self.orient_reg_convs.append(
+                nn.Sequential(
+                    *[
+                        Conv(
+                            outplane,
+                            outplane,
+                            kernel_size=3,
+                            stride=1,
+                            act_fn=act_fn,
+                            normalize=normalize
+                        ),
+                        Conv(
+                            outplane,
+                            outplane,
+                            kernel_size=3,
+                            stride=1,
+                            act_fn=act_fn,
+                            normalize=normalize
+                        ),
+                    ]
+                )
+            )
+            self.orient_cls_preds.append(
+                nn.Conv2d(
+                    in_channels=outplane,
+                    out_channels=self.num_point * self.num_orient_class,
+                    kernel_size=1,
+                    stride=1,
+                    padding=0,
+                )
+            )
+            self.orient_reg_preds.append(
+                nn.Conv2d(
+                    in_channels=outplane,
+                    out_channels=self.num_point * self.num_orient_class,
+                    kernel_size=1,
+                    stride=1,
+                    padding=0,
+                )
+            )
+        if initializer is not None:
+            initialize_from_cfg(self, initializer)
+        prior_prob = 0.01
+        for conv in self.orient_cls_preds:
+            b = conv.bias.view(self.num_point, -1)
+            b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
+            conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
+
+    def forward_net(self, features, idx=0):
+        mlvl_preds = []
+        mlvl_roi_features = []
+        stems = []
+        for i in range(self.num_levels):
+            feat = self.stems[i](features[i])
+            stems.append(feat)
+            orient_cls_feat = self.orient_cls_convs[i](feat)
+            orient_reg_feat = self.orient_reg_convs[i](feat)
+            orient_cls_pred = self.orient_cls_preds[i](orient_cls_feat)
+            orient_reg_pred = self.orient_reg_preds[i](orient_reg_feat)
+            mlvl_preds.append([orient_cls_pred, orient_reg_pred])
+        return mlvl_preds
+
+    def forward(self, input):
+        features = input['features_w_orient']
+        mlvl_raw_preds = self.forward_net(features)
+        output = {}
+        output['preds'] = mlvl_raw_preds
+        return output
+
+    def get_outplanes(self):
+        return copy.copy(self.out_planes)
 
 
 @MODULE_ZOO_REGISTRY.register('YoloXHeadwIDLessShare')
