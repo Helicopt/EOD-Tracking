@@ -162,7 +162,7 @@ class info_collector(object):
 
 @MODULE_ZOO_REGISTRY.register('bytetracker_ma')
 class BYTEMATracker(NoTracking):
-    def __init__(self, cfg, frame_rate=30, collect=None, data_dir='./data', xgb_model=None, xgb_gatings=[None, None], use_gt=False):
+    def __init__(self, cfg, old_kalman=False, frame_rate=30, collect=None, data_dir='./data', xgb_model=None, xgb_gatings=[None, None], use_gt=False):
         super(BYTEMATracker, self).__init__()
         # self.tracked_stracks = []  # type: list[STrack]
         # self.lost_stracks = []  # type: list[STrack]
@@ -196,6 +196,7 @@ class BYTEMATracker(NoTracking):
 
         self.device = None
         self.use_gt = use_gt
+        self.old_kalman = old_kalman
 
     def initialize(self, state):
         super().initialize(state)
@@ -386,7 +387,7 @@ class BYTEMATracker(NoTracking):
         strack_pool = joint_stracks(tracked_stracks, state.lost_stracks)
         # Predict the current location with KF
         STrack.multi_predict(strack_pool)
-        if 'skip' not in seq_config or seq_config['skip'] < 0.0 * self.base_frame_rate:
+        if 'skip' not in seq_config or seq_config['skip'] < 0.0 * self.base_frame_rate or self.old_kalman:
             force_flag = False
         else:
             force_flag = True
