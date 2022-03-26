@@ -58,7 +58,7 @@ class OTAwIDSupervisor(object):
         valid_id_masks = []
 
         # process mlvl_preds: --> [B, A, 85]
-        mlvl_preds = [torch.cat(preds, dim=-1) for preds in mlvl_preds]
+        mlvl_preds = [torch.cat(preds[:4], dim=-1) for preds in mlvl_preds]
         mlvl_preds = torch.cat(mlvl_preds, dim=1)  # [B, A, 85]
 
         gt_bboxes = input['gt_bboxes']
