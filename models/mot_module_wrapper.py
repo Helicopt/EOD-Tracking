@@ -170,6 +170,7 @@ class AffiliatedNetWrapper(nn.Module):
                  backbone_cfg,
                  neck_cfg,
                  task_tag,
+                 fuse_main_net=True,
                  act_fn={'type': 'Silu'},
                  normalize={'type': 'solo_bn'},
                  **kwargs):
@@ -183,14 +184,16 @@ class AffiliatedNetWrapper(nn.Module):
         neck_cfg['kwargs']['inplanes'] = outplanes
         self.neck = MODULE_ZOO_REGISTRY.build(neck_cfg)
         self.outplanes = self.neck.get_outplanes()
-        self.dims = [(main_dim + a_dim) for main_dim, a_dim in zip(inplanes, self.outplanes)]
-        self.trans = nn.ModuleList()
-        for in_dim, out_dim in zip(self.dims, self.outplanes):
-            mod = ConvBnAct(
-                in_dim, out_dim,
-                kernel_size=1, stride=1, act_fn=act_fn, normalize=normalize,
-            )
-            self.trans.append(mod)
+        self.fuse_main_net = fuse_main_net
+        if fuse_main_net:
+            self.dims = [(main_dim + a_dim) for main_dim, a_dim in zip(inplanes, self.outplanes)]
+            self.trans = nn.ModuleList()
+            for in_dim, out_dim in zip(self.dims, self.outplanes):
+                mod = ConvBnAct(
+                    in_dim, out_dim,
+                    kernel_size=1, stride=1, act_fn=act_fn, normalize=normalize,
+                )
+                self.trans.append(mod)
 
     def get_outplanes(self):
         return self.outplanes
@@ -198,10 +201,13 @@ class AffiliatedNetWrapper(nn.Module):
     def forward(self, input):
         a_net_out = self.neck(self.backbone(input))
         main_net_features = input['features']
-        a_net_features = a_net_out['features']
-        task_features = [torch.cat([main_net_features_i.detach(), a_net_features_i], dim=1)
-                         for main_net_features_i, a_net_features_i in zip(main_net_features, a_net_features)]
-        task_features = [self.trans[i](feat_i) for i, feat_i in enumerate(task_features)]
+        if self.fuse_main_net:
+            a_net_features = a_net_out['features']
+            task_features = [torch.cat([main_net_features_i.detach(), a_net_features_i], dim=1)
+                             for main_net_features_i, a_net_features_i in zip(main_net_features, a_net_features)]
+            task_features = [self.trans[i](feat_i) for i, feat_i in enumerate(task_features)]
+        else:
+            task_features = a_net_out['features']
         return {('features_w_%s' % (self.task_tag, )): task_features, 'features': main_net_features}
 
 
