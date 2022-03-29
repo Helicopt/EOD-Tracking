@@ -225,3 +225,14 @@ class MOTFP16Runner(BaseRunner):
         barrier()
         all_device_results_list = all_gather(all_results_list)
         return all_device_results_list
+
+    def _remove_hooks(self, cfg_hooks):
+        need_remove_hooks = ['auto_save_best', 'reload', 'auto_checkpoint', 'custom_auto_save']
+        remove_set = set()
+        for idx, hook in enumerate(cfg_hooks):
+            for temp in need_remove_hooks:
+                if temp in hook['type']:
+                    remove_set.add(idx)
+        for i in remove_set:
+            del cfg_hooks[i]
+        return cfg_hooks
