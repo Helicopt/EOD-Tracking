@@ -34,6 +34,7 @@ from eod.data.datasets.transforms import (
     has_gt_semantic_seg,
     check_fake_gt
 )
+from eod.tasks.det.data.datasets.det_transforms import Flip
 from eod.data.data_utils import (
     coin_tossing,
     get_image_size,
@@ -47,6 +48,7 @@ cv2.ocl.setUseOpenCL(False)
 
 __all__ = [
     'ImageWindow',
+    'MOTFlip',
 ]
 
 
@@ -202,3 +204,28 @@ class ImageWindow(Augmentation):
         output.gt_ignores = ig_bboxes
         output.image = crop_image
         return output
+
+
+@AUGMENTATION_REGISTRY.register('mot_flip')
+class MOTFlip(Flip):
+
+    def __init__(self, flip_p, num_orient_class=0):
+        super(MOTFlip, self).__init__(flip_p)
+        self.orient_div = num_orient_class
+
+    def flip_boxes(self, boxes, width):
+        x1 = boxes[:, 0].clone().detach()
+        x2 = boxes[:, 2].clone().detach()
+        boxes[:, 0] = width - ALIGNED_FLAG.offset - x2
+        boxes[:, 2] = width - ALIGNED_FLAG.offset - x1
+        if self.orient_div > 0 and boxes.shape[1] > 6:
+            new_cls = boxes[:, 6].clone().detach()
+            upper = new_cls > self.orient_div // 2
+            lower = new_cls <= self.orient_div // 2
+            new_cls[lower] = self.orient_div // 2 - new_cls[lower]
+            new_cls[upper] = self.orient_div + self.orient_div // 2 - new_cls[upper]
+            new_cls[new_cls == self.orient_div] = 0
+            boxes[:, 6] = new_cls
+            new_reg = boxes[:, 7].clone().detach()
+            boxes[:, 7] = - new_reg
+        return boxes
