@@ -220,11 +220,13 @@ class MOTFlip(Flip):
         boxes[:, 2] = width - ALIGNED_FLAG.offset - x1
         if self.orient_div > 0 and boxes.shape[1] > 6:
             new_cls = boxes[:, 6].clone().detach()
+            ignored = new_cls < 0
             upper = new_cls > self.orient_div // 2
             lower = new_cls <= self.orient_div // 2
             new_cls[lower] = self.orient_div // 2 - new_cls[lower]
             new_cls[upper] = self.orient_div + self.orient_div // 2 - new_cls[upper]
             new_cls[new_cls == self.orient_div] = 0
+            new_cls[ignored] = -1
             boxes[:, 6] = new_cls
             new_reg = boxes[:, 7].clone().detach()
             boxes[:, 7] = - new_reg
