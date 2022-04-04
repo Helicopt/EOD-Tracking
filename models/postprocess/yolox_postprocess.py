@@ -7,6 +7,7 @@ from eod.utils.model import accuracy as A  # noqa F401
 from eod.tasks.det.models.utils.anchor_generator import build_anchor_generator
 from eod.models.losses import build_loss
 from eod.utils.general.registry_factory import MODULE_ZOO_REGISTRY
+from eod.tasks.det.models.utils.bbox_helper import bbox_iou_overlaps as bbox_overlaps
 
 from eod.utils.env.dist_helper import allreduce, env
 from eod.tasks.det.models.postprocess.roi_supervisor import build_roi_supervisor
