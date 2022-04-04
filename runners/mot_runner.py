@@ -233,6 +233,6 @@ class MOTFP16Runner(BaseRunner):
             for temp in need_remove_hooks:
                 if temp in hook['type']:
                     remove_set.add(idx)
-        for i in remove_set:
+        for i in sorted(list(remove_set), reverse=True):
             del cfg_hooks[i]
         return cfg_hooks
