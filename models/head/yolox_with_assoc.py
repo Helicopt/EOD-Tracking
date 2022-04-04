@@ -144,7 +144,8 @@ class YoloXAssocHead(nn.Module):
             aff_feats = torch.stack([cos_sim, norm_loc_sim], dim=2)
             frame_rate_embeddings = self.sin_embedding(frame_rate, device=aff_feats.device, dtype=aff_feats.dtype)
             diff_embeddings, _ = norm_loc_sim.min(dim=1)
-            diff_embeddings = self.diff_norm(diff_embeddings.reshape(1, -1))
+            diff_embeddings = self.diff_norm(F.adaptive_avg_pool1d(
+                diff_embeddings.reshape(1, 1, -1), self.top_n).reshape(1, -1))
             control_embeddings = torch.cat([frame_rate_embeddings, diff_embeddings], dim=1)
             n, m, c = aff_feats.shape
             aff_feats = self.aff_net(aff_feats.reshape(-1, c))
