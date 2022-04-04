@@ -30,7 +30,7 @@ __all__ = ['YoloXAssocHead']
 @MODULE_ZOO_REGISTRY.register('yolox_assoc')
 class YoloXAssocHead(nn.Module):
 
-    def __init__(self, anchor_generator, inplanes, pre_nms_score_thresh, nms, num_classes, norm_on_bbox=False):
+    def __init__(self, anchor_generator, inplanes, pre_nms_score_thresh, nms, num_classes, framerate_aware=True, norm_on_bbox=False):
         super(YoloXAssocHead, self).__init__()
         self.inplanes = inplanes
         self.point_generator = build_anchor_generator(anchor_generator)
@@ -54,16 +54,18 @@ class YoloXAssocHead(nn.Module):
             nn.BatchNorm1d(64),
             nn.Linear(64, 64),
         )
-        self.diff_norm = nn.LayerNorm(self.top_n)
-        self.att_net = nn.Sequential(
-            nn.Linear(self.sin_div + self.top_n, 128),
-            nn.ReLU(),
-            nn.LayerNorm(128),
-            nn.Linear(128, 128),
-            nn.ReLU(),
-            nn.LayerNorm(128),
-            nn.Linear(128, 64),
-        )
+        self.framerate_aware = framerate_aware
+        if self.framerate_aware:
+            self.diff_norm = nn.LayerNorm(self.top_n)
+            self.att_net = nn.Sequential(
+                nn.Linear(self.sin_div + self.top_n, 128),
+                nn.ReLU(),
+                nn.LayerNorm(128),
+                nn.Linear(128, 128),
+                nn.ReLU(),
+                nn.LayerNorm(128),
+                nn.Linear(128, 64),
+            )
 
     def get_outplanes(self):
         return self.inplanes
@@ -142,15 +144,19 @@ class YoloXAssocHead(nn.Module):
             extended_ref_shp = (extended_ref_boxes[..., 2] * extended_ref_boxes[..., 3]).sqrt()
             norm_loc_sim = loc_sim / (torch.min(extended_shp, extended_ref_shp) + 1e-6)
             aff_feats = torch.stack([cos_sim, norm_loc_sim], dim=2)
-            frame_rate_embeddings = self.sin_embedding(frame_rate, device=aff_feats.device, dtype=aff_feats.dtype)
-            diff_embeddings, _ = norm_loc_sim.min(dim=1)
-            diff_embeddings = self.diff_norm(F.adaptive_avg_pool1d(
-                diff_embeddings.reshape(1, 1, -1), self.top_n).reshape(1, -1))
-            control_embeddings = torch.cat([frame_rate_embeddings, diff_embeddings], dim=1)
+            if self.framerate_aware:
+                frame_rate_embeddings = self.sin_embedding(frame_rate, device=aff_feats.device, dtype=aff_feats.dtype)
+                diff_embeddings, _ = norm_loc_sim.min(dim=1)
+                diff_embeddings = self.diff_norm(F.adaptive_avg_pool1d(
+                    diff_embeddings.reshape(1, 1, -1), self.top_n).reshape(1, -1))
+                control_embeddings = torch.cat([frame_rate_embeddings, diff_embeddings], dim=1)
             n, m, c = aff_feats.shape
             aff_feats = self.aff_net(aff_feats.reshape(-1, c))
-            aff_att = self.att_net(control_embeddings).softmax(dim=1)
-            affinity_matrix = (aff_feats * aff_att).sum(dim=1).reshape(n, m)
+            if self.framerate_aware:
+                aff_att = self.att_net(control_embeddings).softmax(dim=1)
+                affinity_matrix = (aff_feats * aff_att).sum(dim=1).reshape(n, m)
+            else:
+                affinity_matrix = aff_feats.mean(dim=1).reshape(n, m)
             # info_debug(det_boxes)
             # info_debug(id_embeddings)
             # info_debug(ref_boxes)
