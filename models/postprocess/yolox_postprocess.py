@@ -271,7 +271,7 @@ class YoloxwAssocProcess(YoloxwIDPostProcess):
         gt_ids = gt_bboxes[:, 5]
         gt_bboxes = gt_bboxes[:, :4]
         ids = torch.zeros(dets.shape[0], dtype=torch.long, device=dets.device)
-        if dets.numel() > 0:
+        if dets.numel() > 0 and gt_bboxes.numel() > 0:
             ious = bbox_overlaps(dets, gt_bboxes)
             mxs, inds = ious.max(dim=1)
             mask = mxs > self.iou_thr
