@@ -248,6 +248,92 @@ class YoloxwIDPostProcess(nn.Module):
         return ave_normalizer
 
 
+@MODULE_ZOO_REGISTRY.register('yolox_post_w_assoc')
+class YoloxwAssocProcess(YoloxwIDPostProcess):
+
+    def __init__(self,
+                 num_classes,
+                 num_ids,
+                 inplanes,
+                 cfg,
+                 iou_thr=0.7,
+                 **kwargs):
+        super().__init__(num_classes,
+                         num_ids,
+                         inplanes,
+                         cfg, **kwargs)
+        self.assoc_loss = build_loss(cfg['assoc_loss'])
+        self.iou_thr = iou_thr
+
+    @torch.no_grad()
+    def match_detections(self, dets, gt_bboxes):
+        gt_ids = gt_bboxes[:, 5]
+        gt_bboxes = gt_bboxes[:, :4]
+        ids = torch.zeros(dets.shape[0], dtype=torch.long, device=dets.device)
+        if dets.numel() > 0:
+            ious = bbox_overlaps(dets, gt_bboxes)
+            mxs, inds = ious.max(dim=1)
+            mask = mxs > self.iou_thr
+            ids[mask] = gt_ids[inds[mask]].long()
+        return ids
+
+    def get_assoc_loss(self, input):
+        n = len(input['affinities'])
+        assoc_pred = torch.cat([aff.flatten() for aff in input['affinities']])
+        masks = []
+        targets = []
+        with torch.no_grad():
+            for i in range(n):
+                a_dets = input['dt_bboxes'][i]
+                a_gt_bboxes = input['gt_bboxes'][i]
+                b_dets = input['refs']['data'][-1]['dt_bboxes'][i]
+                b_gt_bboxes = input['refs']['original'][-1]['gt_bboxes'][i]
+                a_ids = self.match_detections(a_dets, a_gt_bboxes)
+                b_ids = self.match_detections(b_dets, b_gt_bboxes)
+                target = (a_ids.reshape(-1, 1) == b_ids.reshape(1, -1)).float()
+                mask = (a_ids > 0).reshape(-1, 1) | (b_ids > 0).reshape(1, -1)
+                masks.append(mask)
+                targets.append(target)
+        masks = torch.cat([mask.flatten() for mask in masks])
+        assoc_targets = torch.cat([target.flatten() for target in targets])
+        pos_masks = masks & (assoc_targets > 0.99)
+        num_all = masks.sum().item()
+        num_all = max(num_all, 1)
+        num_fgs = pos_masks.sum().item()
+        num_fgs = max(num_fgs, 1)
+        full_assoc_loss = self.assoc_loss(assoc_pred[masks], assoc_targets[masks], normalizer_override=num_all)
+        pos_assoc_oss = self.assoc_loss(assoc_pred[pos_masks], assoc_targets[pos_masks], normalizer_override=num_fgs)
+        losses = {
+            self.prefix + '.assoc_loss': full_assoc_loss + pos_assoc_oss,
+        }
+        return losses
+
+    def forward(self, input):
+        noaug_flag = input['noaug_flag']
+        if 'main' in input and 'ref' in input:
+            input = input['main']
+
+        mlvl_preds, mlvl_locations, mlvl_ori_loc_preds = self.prepare_preds(input)
+
+        if self.training:
+            targets = self.supervisor.get_targets(mlvl_locations, input, mlvl_preds)
+            if not self.use_l1:
+                losses = self.get_loss(targets, mlvl_preds, noaug_flag=noaug_flag)
+            else:
+                losses = self.get_loss(targets, mlvl_preds, mlvl_ori_loc_preds, noaug_flag=noaug_flag)
+            losses_assoc = self.get_assoc_loss(input)
+            losses.update(losses_assoc)
+            return losses
+        else:
+            detections = [torch.cat([dets.new_full((dets.shape[0], 1), ix), dets], dim=1)
+                          for ix, dets in enumerate(input['dt_bboxes'])]
+            results = {
+                'dt_bboxes': torch.cat(detections, dim=0),
+                'id_embeds': torch.cat(input['id_embeds'], dim=0),
+            }
+            return results
+
+
 @MODULE_ZOO_REGISTRY.register('yolox_post_w_id_n_orient')
 class YoloxwIDnOrientPostProcess(YoloxwIDPostProcess):
 
