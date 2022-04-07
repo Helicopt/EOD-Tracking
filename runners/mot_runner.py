@@ -155,15 +155,19 @@ class MOTFP16Runner(BaseRunner):
         batch_size = self.data_loaders['test'].batch_sampler.batch_size
         assert batch_size == 1, 'only size 1 supported'
         if self.cache:
-            if not hasattr(self, 'cache_queue'):
-                self.cache_queue = deque(maxlen=self.data_loaders['test'].dataset.ref_num)
-            batch['ref_cache'] = [False] * batch_size
-            if batch['begin_flag'][0]:
-                self.cache_queue.clear()
+            if self.tracker is not None and hasattr(self.tracker, 'grab_cache'):
+                batch['ref'] = self.tracker.grab_cache()
+                batch['ref_cache'] = [True] * batch_size
             else:
-                batch['ref_cache'][0] = True
-                tmp = list(self.cache_queue)
-                batch['ref'] = tmp
+                if not hasattr(self, 'cache_queue'):
+                    self.cache_queue = deque(maxlen=self.data_loaders['test'].dataset.ref_num)
+                batch['ref_cache'] = [False] * batch_size
+                if batch['begin_flag'][0]:
+                    self.cache_queue.clear()
+                else:
+                    batch['ref_cache'][0] = True
+                    tmp = list(self.cache_queue)
+                    batch['ref'] = tmp
 
         assert not self.model.training
         if self.estimate_time:
@@ -174,14 +178,17 @@ class MOTFP16Runner(BaseRunner):
             model_end = time.time()
             torch.cuda.synchronize()
         if self.cache:
-            needed_keys = ['roi_features', 'preds', 'strides', 'image_info', 'gt_bboxes']
-            self.cache_queue.append({
-                k: output[k] for k in needed_keys
-            })
-            while len(self.cache_queue) < self.cache_queue.maxlen:
+            if self.tracker is not None and hasattr(self.tracker, 'grab_cache'):
+                pass
+            else:
+                needed_keys = ['roi_features', 'preds', 'strides', 'image_info', 'gt_bboxes']
                 self.cache_queue.append({
                     k: output[k] for k in needed_keys
                 })
+                while len(self.cache_queue) < self.cache_queue.maxlen:
+                    self.cache_queue.append({
+                        k: output[k] for k in needed_keys
+                    })
 
         if self.tracker is not None:
             if self.estimate_time:

@@ -127,6 +127,8 @@ class YoloXAssocHead(nn.Module):
         # logger_print(frame_rates)
         ret = []
         for b_ix, (det_boxes, id_embeddings) in enumerate(zip(main['dt_bboxes'], main['id_embeds'])):
+            if det_boxes is None or id_embeddings is None:
+                ret.append(None)
             det_boxes = det_boxes.detach()
             if frame_rates is not None:
                 frame_rate = frame_rates[b_ix]
@@ -139,9 +141,10 @@ class YoloXAssocHead(nn.Module):
             cos_sim = F.cosine_similarity(extended_id_embeds, extedned_ref_embeds, dim=2)
             extended_boxes = det_boxes.unsqueeze(1).repeat(1, ref_boxes.shape[0], 1)
             extended_ref_boxes = ref_boxes.unsqueeze(0).repeat(det_boxes.shape[0], 1, 1)
-            loc_sim = (extended_boxes[..., :2] - extended_ref_boxes[..., :2]).pow(2).sum(dim=2).sqrt()
-            extended_shp = (extended_boxes[..., 2] * extended_boxes[..., 3]).sqrt()
-            extended_ref_shp = (extended_ref_boxes[..., 2] * extended_ref_boxes[..., 3]).sqrt()
+            loc_sim = (extended_boxes[..., :2] + extended_boxes[..., 2:4] - extended_ref_boxes[...,
+                       :2] - extended_ref_boxes[..., 2:4]).div(2).pow(2).sum(dim=2).sqrt()
+            extended_shp = ((extended_boxes[..., 2:4] - extended_boxes[..., :2]).prod(dim=-1)).sqrt()
+            extended_ref_shp = ((extended_ref_boxes[..., 2:4] - extended_ref_boxes[..., :2]).prod(dim=-1)).sqrt()
             norm_loc_sim = loc_sim / (torch.min(extended_shp, extended_ref_shp) + 1e-6)
             aff_feats = torch.stack([cos_sim, norm_loc_sim], dim=2)
             if self.framerate_aware:
@@ -189,7 +192,7 @@ class YoloXAssocHead(nn.Module):
                 refs.append(ref_i)
             ref = {'data': refs, 'original': ref}
 
-        if ref is not None:
+        if ref is not None and 'data' in ref:
             aff_matrix = self.get_affinity_matrix(results, ref, frame_rates=frame_rates)
             results['affinities'] = aff_matrix
             results['refs'] = ref

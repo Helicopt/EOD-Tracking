@@ -17,7 +17,7 @@ class TrackState(object):
 class NoTracking(object):
 
     masked_keys = set(['dt_bboxes', 'id_embeds'])
-    common_keys = set([])
+    common_keys = set(['strides'])
     ignored_keys = set(['image', 'features', 'preds', 'roi_features', 'refs'])
 
     def __init__(self, **kwargs):
