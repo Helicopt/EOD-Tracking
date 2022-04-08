@@ -280,11 +280,13 @@ class YoloxwAssocProcess(YoloxwIDPostProcess):
 
     def get_assoc_loss(self, input):
         n = len(input['affinities'])
-        assoc_pred = torch.cat([aff.flatten() for aff in input['affinities']])
+        assoc_pred = torch.cat([aff.flatten() for aff in input['affinities'] if aff is not None])
         masks = []
         targets = []
         with torch.no_grad():
             for i in range(n):
+                if input['affinities'][i] is None:
+                    continue
                 a_dets = input['dt_bboxes'][i]
                 a_gt_bboxes = input['gt_bboxes'][i]
                 b_dets = input['refs']['data'][-1]['dt_bboxes'][i]

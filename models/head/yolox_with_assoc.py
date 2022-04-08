@@ -129,11 +129,15 @@ class YoloXAssocHead(nn.Module):
         for b_ix, (det_boxes, id_embeddings) in enumerate(zip(main['dt_bboxes'], main['id_embeds'])):
             if det_boxes is None or id_embeddings is None:
                 ret.append(None)
+                continue
             det_boxes = det_boxes.detach()
             if frame_rates is not None:
                 frame_rate = frame_rates[b_ix]
             else:
                 frame_rate = 1.0
+            if ref['data'][-1]['dt_bboxes'][b_ix] is None or ref['data'][-1]['id_embeds'][b_ix] is None:
+                ret.append(None)
+                continue
             ref_boxes = ref['data'][-1]['dt_bboxes'][b_ix].detach()
             ref_embeds = ref['data'][-1]['id_embeds'][b_ix]
             extended_id_embeds = id_embeddings.unsqueeze(1).repeat(1, ref_boxes.shape[0], 1)
@@ -237,6 +241,8 @@ class YoloXAssocHead(nn.Module):
             id_feats = id_feats_per_img[conf_mask]
 
             if not detections.size(0):
+                det_results.append(None)
+                id_feats_all.append(None)
                 continue
 
             # batch nms
@@ -255,6 +261,8 @@ class YoloXAssocHead(nn.Module):
             # If none remain process next image
             n = rois_keep.shape[0]  # number of boxes
             if not n:
+                det_results.append(None)
+                id_feats_all.append(None)
                 continue
 
             if n > self.top_n:
@@ -264,8 +272,8 @@ class YoloXAssocHead(nn.Module):
             det_results.append(rois_keep)
             id_feats_all.append(id_feats_keep)
 
-        if len(det_results) == 0:
-            det_results.append(preds.new_zeros((1, 6)))
-            id_feats_all.append(preds.new_zeros((1, 111)))
+        # if len(det_results) == 0:
+        #     det_results.append(preds.new_zeros((1, 6)))
+        #     id_feats_all.append(preds.new_zeros((1, 111)))
 
         return {'dt_bboxes': det_results, 'id_embeds': id_feats_all}
