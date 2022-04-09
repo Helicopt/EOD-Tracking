@@ -258,6 +258,7 @@ class YoloxwAssocProcess(YoloxwIDPostProcess):
                  inplanes,
                  cfg,
                  iou_thr=0.7,
+                 ignore_aug=False,
                  **kwargs):
         super().__init__(num_classes,
                          num_ids,
@@ -265,6 +266,7 @@ class YoloxwAssocProcess(YoloxwIDPostProcess):
                          cfg, **kwargs)
         self.assoc_loss = build_loss(cfg['assoc_loss'])
         self.iou_thr = iou_thr
+        self.ignore_aug = ignore_aug
 
     @torch.no_grad()
     def match_detections(self, dets, gt_bboxes):
@@ -286,6 +288,10 @@ class YoloxwAssocProcess(YoloxwIDPostProcess):
         with torch.no_grad():
             for i in range(n):
                 if input['affinities'][i] is None:
+                    continue
+                if self.ignore_aug and not input['noaug_flag'][i]:
+                    masks.append(input['affinities'][i].new_zeros(input['affinities'][i].shape, dtype=torch.bool))
+                    targets.append(input['affinities'][i].new_zeros(input['affinities'][i].shape))
                     continue
                 a_dets = input['dt_bboxes'][i]
                 a_gt_bboxes = input['gt_bboxes'][i]

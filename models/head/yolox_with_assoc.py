@@ -124,6 +124,10 @@ class YoloXAssocHead(nn.Module):
         return framerates_emb
 
     def get_affinity_matrix(self, main, ref, frame_rates=None):
+        if not self.training:
+            for mod in self.aff_net:
+                if mod.__class__.__name__ == 'BatchNorm1d':
+                    mod.train()
         # logger_print(frame_rates)
         ret = []
         for b_ix, (det_boxes, id_embeddings) in enumerate(zip(main['dt_bboxes'], main['id_embeds'])):
