@@ -184,7 +184,7 @@ class YoloXAssocHead(nn.Module):
         return framerates_emb
 
     def get_affinity_matrix(self, main, ref, frame_rates=None):
-        if not self.training:
+        if not self.training and self.feature_type != 'low':
             for mod in self.aff_net:
                 if mod.__class__.__name__ == 'BatchNorm1d':
                     mod.train()
