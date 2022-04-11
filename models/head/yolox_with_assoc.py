@@ -30,7 +30,9 @@ __all__ = ['YoloXAssocHead']
 @MODULE_ZOO_REGISTRY.register('yolox_assoc')
 class YoloXAssocHead(nn.Module):
 
-    def __init__(self, anchor_generator, inplanes, pre_nms_score_thresh, nms, num_classes, framerate_aware=True, norm_on_bbox=False):
+    def __init__(self,
+                 anchor_generator, inplanes, pre_nms_score_thresh, nms, num_classes,
+                 framerate_aware=True, auto_framerate=False, control='min', feature_type='high', norm_on_bbox=False):
         super(YoloXAssocHead, self).__init__()
         self.inplanes = inplanes
         self.point_generator = build_anchor_generator(anchor_generator)
@@ -41,31 +43,89 @@ class YoloXAssocHead(nn.Module):
         self.sin_div = 256
         self.num_classes = num_classes - 1
         self.norm_on_bbox = norm_on_bbox
-        self.aff_net = nn.Sequential(
-            nn.BatchNorm1d(2),
-            nn.Linear(2, 32),
-            nn.ReLU(),
-            nn.BatchNorm1d(32),
-            nn.Linear(32, 32),
-            nn.ReLU(),
-            nn.BatchNorm1d(32),
-            nn.Linear(32, 64),
-            nn.ReLU(),
-            nn.BatchNorm1d(64),
-            nn.Linear(64, 64),
-        )
-        self.framerate_aware = framerate_aware
-        if self.framerate_aware:
-            self.diff_norm = nn.LayerNorm(self.top_n)
-            self.att_net = nn.Sequential(
-                nn.Linear(self.sin_div + self.top_n, 128),
+        self.feature_type = feature_type
+        assert feature_type in ['high', 'mid', 'low']
+        if self.feature_type == 'high':
+            self.aff_net = nn.Sequential(
+                nn.BatchNorm1d(2),
+                nn.Linear(2, 32),
                 nn.ReLU(),
-                nn.LayerNorm(128),
+                nn.BatchNorm1d(32),
+                nn.Linear(32, 32),
+                nn.ReLU(),
+                nn.BatchNorm1d(32),
+                nn.Linear(32, 64),
+                nn.ReLU(),
+                nn.BatchNorm1d(64),
+                nn.Linear(64, 64),
+            )
+        if self.feature_type == 'mid':
+            self.aff_net = nn.Sequential(
+                nn.BatchNorm1d(4),
+                nn.Linear(4, 32),
+                nn.ReLU(),
+                nn.BatchNorm1d(32),
+                nn.Linear(32, 32),
+                nn.ReLU(),
+                nn.BatchNorm1d(32),
+                nn.Linear(32, 64),
+                nn.ReLU(),
+                nn.BatchNorm1d(64),
+                nn.Linear(64, 64),
+            )
+        if self.feature_type == 'low':
+            inplane = self.inplanes[0]
+            self.aff_net_0 = nn.Sequential(
+                nn.BatchNorm1d(4),
+                nn.Linear(4, 32),
+                nn.ReLU(),
+                nn.BatchNorm1d(32),
+                nn.Linear(32, 32),
+                nn.ReLU(),
+                nn.BatchNorm1d(32),
+                nn.Linear(32, 64),
+                nn.ReLU(),
+                nn.BatchNorm1d(64),
+                nn.Linear(64, 64),
+            )
+            self.aff_net_1 = nn.Sequential(
+                nn.Linear(inplane, 128),
+                nn.ReLU(),
+                nn.BatchNorm1d(128),
                 nn.Linear(128, 128),
                 nn.ReLU(),
-                nn.LayerNorm(128),
+                nn.BatchNorm1d(128),
                 nn.Linear(128, 64),
+                nn.ReLU(),
+                nn.BatchNorm1d(64),
+                nn.Linear(64, 64),
             )
+        self.framerate_aware = framerate_aware
+        self.auto_framerate = auto_framerate
+        if self.framerate_aware:
+            self.diff_norm = nn.LayerNorm(self.top_n)
+            if not self.auto_framerate:
+                self.att_net = nn.Sequential(
+                    nn.Linear(self.sin_div + self.top_n, 128),
+                    nn.ReLU(),
+                    nn.LayerNorm(128),
+                    nn.Linear(128, 128),
+                    nn.ReLU(),
+                    nn.LayerNorm(128),
+                    nn.Linear(128, 64),
+                )
+            else:
+                self.att_net = nn.Sequential(
+                    nn.Linear(self.top_n, 128),
+                    nn.ReLU(),
+                    nn.LayerNorm(128),
+                    nn.Linear(128, 128),
+                    nn.ReLU(),
+                    nn.LayerNorm(128),
+                    nn.Linear(128, 64),
+                )
+        self.control = control
+        assert control in ['min', 'sim']
 
     def get_outplanes(self):
         return self.inplanes
@@ -154,15 +214,39 @@ class YoloXAssocHead(nn.Module):
             extended_shp = ((extended_boxes[..., 2:4] - extended_boxes[..., :2]).prod(dim=-1)).sqrt()
             extended_ref_shp = ((extended_ref_boxes[..., 2:4] - extended_ref_boxes[..., :2]).prod(dim=-1)).sqrt()
             norm_loc_sim = loc_sim / (torch.min(extended_shp, extended_ref_shp) + 1e-6)
-            aff_feats = torch.stack([cos_sim, norm_loc_sim], dim=2)
+            if self.feature_type == 'high':
+                aff_feats = torch.stack([cos_sim, norm_loc_sim], dim=2)
+            if self.feature_type == 'mid' or self.feature_type == 'low':
+                extended_wh = extended_boxes[..., 2:4] - extended_boxes[..., :2]
+                extended_ref_wh = extended_ref_boxes[..., 2:4] - extended_ref_boxes[..., :2]
+                scale = extended_wh[..., 1] * extended_ref_wh[..., 0]
+                ref_scale = extended_ref_wh[..., 1] * extended_wh[..., 0]
+                scale_sim = torch.log((scale + 1e-6) / (ref_scale + 1e-6)).abs()
+                shp_sim = torch.log((extended_shp + 1e-6) / (extended_ref_shp + 1e-6)).abs()
+                aff_feats = torch.stack([cos_sim, norm_loc_sim, scale_sim, shp_sim], dim=2)
+            if self.feature_type == 'low':
+                aff_feats_low = extended_id_embeds * extedned_ref_embeds
             if self.framerate_aware:
-                frame_rate_embeddings = self.sin_embedding(frame_rate, device=aff_feats.device, dtype=aff_feats.dtype)
-                diff_embeddings, _ = norm_loc_sim.min(dim=1)
+                if not self.auto_framerate:
+                    frame_rate_embeddings = self.sin_embedding(
+                        frame_rate, device=aff_feats.device, dtype=aff_feats.dtype)
+                if self.control == 'min':
+                    diff_embeddings, _ = norm_loc_sim.min(dim=1)
+                else:
+                    _, max_inds = cos_sim.max(dim=1)
+                    diff_embeddings = torch.gather(norm_loc_sim, 1, max_inds.unsqueeze(1)).squeeze(-1)
                 diff_embeddings = self.diff_norm(F.adaptive_avg_pool1d(
                     diff_embeddings.reshape(1, 1, -1), self.top_n).reshape(1, -1))
-                control_embeddings = torch.cat([frame_rate_embeddings, diff_embeddings], dim=1)
+                if not self.auto_framerate:
+                    control_embeddings = torch.cat([frame_rate_embeddings, diff_embeddings], dim=1)
+                else:
+                    control_embeddings = diff_embeddings
             n, m, c = aff_feats.shape
-            aff_feats = self.aff_net(aff_feats.reshape(-1, c))
+            if self.feature_type == 'high' or self.feature_type == 'mid':
+                aff_feats = self.aff_net(aff_feats.reshape(-1, c))
+            if self.feature_type == 'low':
+                c_low = aff_feats_low.shape[-1]
+                aff_feats = self.aff_net_0(aff_feats.reshape(-1, c)) + self.aff_net_1(aff_feats_low.reshape(-1, c_low))
             if self.framerate_aware:
                 aff_att = self.att_net(control_embeddings).softmax(dim=1)
                 affinity_matrix = (aff_feats * aff_att).sum(dim=1).reshape(n, m)
