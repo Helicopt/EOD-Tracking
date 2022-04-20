@@ -32,7 +32,7 @@ class YoloXAssocHead(nn.Module):
 
     def __init__(self,
                  anchor_generator, inplanes, pre_nms_score_thresh, nms, num_classes,
-                 framerate_aware=True, auto_framerate=False, control='min', feature_type='high', norm_on_bbox=False):
+                 framerate_aware=True, auto_framerate=False, control='min', feature_type='high', norm_on_highlvl=True, norm_on_bbox=False):
         super(YoloXAssocHead, self).__init__()
         self.inplanes = inplanes
         self.point_generator = build_anchor_generator(anchor_generator)
@@ -44,50 +44,86 @@ class YoloXAssocHead(nn.Module):
         self.num_classes = num_classes - 1
         self.norm_on_bbox = norm_on_bbox
         self.feature_type = feature_type
+        self.norm_on_highlvl = norm_on_highlvl
         assert feature_type in ['high', 'mid', 'low']
         if self.feature_type == 'high':
-            self.aff_net = nn.Sequential(
-                nn.BatchNorm1d(2),
-                nn.Linear(2, 32),
-                nn.ReLU(),
-                nn.BatchNorm1d(32),
-                nn.Linear(32, 32),
-                nn.ReLU(),
-                nn.BatchNorm1d(32),
-                nn.Linear(32, 64),
-                nn.ReLU(),
-                nn.BatchNorm1d(64),
-                nn.Linear(64, 64),
-            )
+            if self.norm_on_highlvl:
+                self.aff_net = nn.Sequential(
+                    nn.BatchNorm1d(2),
+                    nn.Linear(2, 32),
+                    nn.ReLU(),
+                    nn.BatchNorm1d(32),
+                    nn.Linear(32, 32),
+                    nn.ReLU(),
+                    nn.BatchNorm1d(32),
+                    nn.Linear(32, 64),
+                    nn.ReLU(),
+                    nn.BatchNorm1d(64),
+                    nn.Linear(64, 64),
+                )
+            else:
+                self.aff_net = nn.Sequential(
+                    nn.Linear(2, 32),
+                    nn.ReLU(),
+                    nn.Linear(32, 32),
+                    nn.ReLU(),
+                    nn.Linear(32, 64),
+                    nn.ReLU(),
+                    nn.Linear(64, 64),
+                )
+
         if self.feature_type == 'mid':
-            self.aff_net = nn.Sequential(
-                nn.BatchNorm1d(4),
-                nn.Linear(4, 32),
-                nn.ReLU(),
-                nn.BatchNorm1d(32),
-                nn.Linear(32, 32),
-                nn.ReLU(),
-                nn.BatchNorm1d(32),
-                nn.Linear(32, 64),
-                nn.ReLU(),
-                nn.BatchNorm1d(64),
-                nn.Linear(64, 64),
-            )
+            if self.norm_on_highlvl:
+                self.aff_net = nn.Sequential(
+                    nn.BatchNorm1d(4),
+                    nn.Linear(4, 32),
+                    nn.ReLU(),
+                    nn.BatchNorm1d(32),
+                    nn.Linear(32, 32),
+                    nn.ReLU(),
+                    nn.BatchNorm1d(32),
+                    nn.Linear(32, 64),
+                    nn.ReLU(),
+                    nn.BatchNorm1d(64),
+                    nn.Linear(64, 64),
+                )
+            else:
+                self.aff_net = nn.Sequential(
+                    nn.Linear(4, 32),
+                    nn.ReLU(),
+                    nn.Linear(32, 32),
+                    nn.ReLU(),
+                    nn.Linear(32, 64),
+                    nn.ReLU(),
+                    nn.Linear(64, 64),
+                )
+
         if self.feature_type == 'low':
             inplane = self.inplanes[0]
-            self.aff_net_0 = nn.Sequential(
-                nn.BatchNorm1d(4),
-                nn.Linear(4, 32),
-                nn.ReLU(),
-                nn.BatchNorm1d(32),
-                nn.Linear(32, 32),
-                nn.ReLU(),
-                nn.BatchNorm1d(32),
-                nn.Linear(32, 64),
-                nn.ReLU(),
-                nn.BatchNorm1d(64),
-                nn.Linear(64, 64),
-            )
+            if self.norm_on_highlvl:
+                self.aff_net_0 = nn.Sequential(
+                    nn.BatchNorm1d(4),
+                    nn.Linear(4, 32),
+                    nn.ReLU(),
+                    nn.BatchNorm1d(32),
+                    nn.Linear(32, 32),
+                    nn.ReLU(),
+                    nn.BatchNorm1d(32),
+                    nn.Linear(32, 64),
+                    nn.ReLU(),
+                    nn.BatchNorm1d(64),
+                    nn.Linear(64, 64),
+                )
+            else:
+                self.aff_net_0 = nn.Sequential(
+                    nn.Linear(4, 32),
+                    nn.ReLU(),
+                    nn.Linear(32, 32),
+                    nn.ReLU(),
+                    nn.Linear(32, 64),
+                    nn.ReLU(),
+                    nn.Linear(64, 64),
+                )
             self.aff_net_1 = nn.Sequential(
                 nn.Linear(inplane, 128),
                 nn.ReLU(),
@@ -184,8 +220,12 @@ class YoloXAssocHead(nn.Module):
         return framerates_emb
 
     def get_affinity_matrix(self, main, ref, frame_rates=None):
-        if not self.training and self.feature_type != 'low':
-            for mod in self.aff_net:
+        if not self.training and self.norm_on_highlvl:
+            if self.feature_type != 'low':
+                aff_net = self.aff_net
+            else:
+                aff_net = self.aff_net_0
+            for mod in aff_net:
                 if mod.__class__.__name__ == 'BatchNorm1d':
                     mod.train()
         # logger_print(frame_rates)
