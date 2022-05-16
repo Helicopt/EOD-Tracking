@@ -258,6 +258,7 @@ class YoloxwAssocProcess(YoloxwIDPostProcess):
                  inplanes,
                  cfg,
                  iou_thr=0.7,
+                 pred_framerate=False,
                  ignore_aug=False,
                  **kwargs):
         super().__init__(num_classes,
@@ -266,6 +267,7 @@ class YoloxwAssocProcess(YoloxwIDPostProcess):
                          cfg, **kwargs)
         self.assoc_loss = build_loss(cfg['assoc_loss'])
         self.iou_thr = iou_thr
+        self.pred_framerate = pred_framerate
         self.ignore_aug = ignore_aug
 
     @torch.no_grad()
@@ -314,7 +316,17 @@ class YoloxwAssocProcess(YoloxwIDPostProcess):
         pos_assoc_oss = self.assoc_loss(assoc_pred[pos_masks], assoc_targets[pos_masks], normalizer_override=num_fgs)
         losses = {
             self.prefix + '.assoc_loss': full_assoc_loss + pos_assoc_oss,
+            self.prefix + '.accuracy_assoc_full': A.accuracy_v2(assoc_pred[masks], assoc_targets[masks], activation_type='sigmoid'),
+            self.prefix + '.accuracy_assoc_pos': A.accuracy_v2(assoc_pred[pos_masks], assoc_targets[pos_masks], activation_type='sigmoid')
         }
+        if self.pred_framerate:
+            pred_skip = input['log2framerates'].reshape(-1)
+            target_skip = input.get('framerate', None)
+            if target_skip is not None:
+                log_target = torch.log2(target_skip).reshape(-1)
+                losses[self.prefix + '.log2fr_loss'] = F.smooth_l1_loss(pred_skip, log_target)
+            else:
+                losses[self.prefix + '.log2fr_loss'] = 0
         return losses
 
     def forward(self, input):
@@ -339,6 +351,7 @@ class YoloxwAssocProcess(YoloxwIDPostProcess):
             results = {
                 'dt_bboxes': torch.cat(detections, dim=0),
                 'id_embeds': torch.cat(input['id_embeds'], dim=0),
+                'original': [{'gt_bboxes': input['gt_bboxes']}],
             }
             return results
 

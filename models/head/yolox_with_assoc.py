@@ -22,6 +22,9 @@ from eod.tasks.det.models.utils.bbox_helper import (
     offset2bbox
 )
 
+from eod.utils.model import accuracy as A  # noqa F401
+from eod.tasks.det.models.utils.bbox_helper import bbox_iou_overlaps as bbox_overlaps
+
 from ...utils.debug import info_debug, logger_print
 
 __all__ = ['YoloXAssocHead']
@@ -32,7 +35,8 @@ class YoloXAssocHead(nn.Module):
 
     def __init__(self,
                  anchor_generator, inplanes, pre_nms_score_thresh, nms, num_classes,
-                 framerate_aware=True, auto_framerate=False, control='min', feature_type='high', norm_on_highlvl=True, norm_on_bbox=False):
+                 framerate_aware=True, auto_framerate=False, control='min', feature_type='high', norm_on_highlvl=True, norm_on_bbox=False,
+                 pred_framerate=False, return_extra=False):
         super(YoloXAssocHead, self).__init__()
         self.inplanes = inplanes
         self.point_generator = build_anchor_generator(anchor_generator)
@@ -45,6 +49,8 @@ class YoloXAssocHead(nn.Module):
         self.norm_on_bbox = norm_on_bbox
         self.feature_type = feature_type
         self.norm_on_highlvl = norm_on_highlvl
+        self.pred_framerate = pred_framerate and auto_framerate
+        self.return_extra = return_extra
         assert feature_type in ['high', 'mid', 'low']
         if self.feature_type == 'high':
             if self.norm_on_highlvl:
@@ -136,6 +142,20 @@ class YoloXAssocHead(nn.Module):
                 nn.BatchNorm1d(64),
                 nn.Linear(64, 64),
             )
+        if self.pred_framerate:
+            self.pfr_net = nn.Sequential(
+                nn.Linear(self.top_n, 128),
+                nn.ReLU(),
+                nn.LayerNorm(128),
+                nn.Linear(128, 128),
+                nn.ReLU(),
+                nn.LayerNorm(128),
+                nn.Linear(128, 64),
+                nn.ReLU(),
+                nn.LayerNorm(64),
+                nn.Linear(64, 1),
+            )
+
         self.framerate_aware = framerate_aware
         self.auto_framerate = auto_framerate
         if self.framerate_aware:
@@ -230,9 +250,13 @@ class YoloXAssocHead(nn.Module):
                     mod.train()
         # logger_print(frame_rates)
         ret = []
+        pred_frs = []
+        extras = []
         for b_ix, (det_boxes, id_embeddings) in enumerate(zip(main['dt_bboxes'], main['id_embeds'])):
             if det_boxes is None or id_embeddings is None:
                 ret.append(None)
+                pred_frs.append(0.)
+                extras.append(None)
                 continue
             det_boxes = det_boxes.detach()
             if frame_rates is not None:
@@ -241,6 +265,8 @@ class YoloXAssocHead(nn.Module):
                 frame_rate = 1.0
             if ref['data'][-1]['dt_bboxes'][b_ix] is None or ref['data'][-1]['id_embeds'][b_ix] is None:
                 ret.append(None)
+                pred_frs.append(0.)
+                extras.append(None)
                 continue
             ref_boxes = ref['data'][-1]['dt_bboxes'][b_ix].detach()
             ref_embeds = ref['data'][-1]['id_embeds'][b_ix]
@@ -275,8 +301,10 @@ class YoloXAssocHead(nn.Module):
                 else:
                     _, max_inds = cos_sim.max(dim=1)
                     diff_embeddings = torch.gather(norm_loc_sim, 1, max_inds.unsqueeze(1)).squeeze(-1)
+                extra_ = {'ctrl_emb': diff_embeddings, 'original_cos_sim': (cos_sim, norm_loc_sim)}
                 diff_embeddings = self.diff_norm(F.adaptive_avg_pool1d(
                     diff_embeddings.reshape(1, 1, -1), self.top_n).reshape(1, -1))
+                extras.append(extra_)
                 if not self.auto_framerate:
                     control_embeddings = torch.cat([frame_rate_embeddings, diff_embeddings], dim=1)
                 else:
@@ -299,8 +327,16 @@ class YoloXAssocHead(nn.Module):
             # info_debug(cos_sim, statistics=True)
             # info_debug(norm_loc_sim, statistics=True)
             ret.append(affinity_matrix)
+            if self.pred_framerate:
+                pred_fr = self.pfr_net(control_embeddings)
+                pred_frs.append(pred_fr)
         # info_debug(ret, statistics=True)
-        return ret
+        return_tuples = [ret]
+        if self.pred_framerate:
+            return_tuples.append(torch.cat(pred_frs, dim=0) if self.training else pred_frs)
+        if self.return_extra:
+            return_tuples.append(extras)
+        return return_tuples
 
     def forward(self, input):
         frame_rates = input.get('framerate', None)
@@ -325,7 +361,17 @@ class YoloXAssocHead(nn.Module):
             ref = {'data': refs, 'original': ref}
 
         if ref is not None and 'data' in ref:
-            aff_matrix = self.get_affinity_matrix(results, ref, frame_rates=frame_rates)
+            if self.pred_framerate:
+                ret_tupples = self.get_affinity_matrix(results, ref)
+                aff_matrix, pred_frs = ret_tupples[0], ret_tupples[1]
+                results['log2framerates'] = pred_frs
+                if self.return_extra:
+                    results['extra'] = ret_tupples[2]
+            else:
+                ret_tupples = self.get_affinity_matrix(results, ref, frame_rates=frame_rates)
+                aff_matrix = ret_tupples[0]
+                if self.return_extra:
+                    results['extra'] = ret_tupples[1]
             results['affinities'] = aff_matrix
             results['refs'] = ref
 
