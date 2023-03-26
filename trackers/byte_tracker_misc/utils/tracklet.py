@@ -50,7 +50,7 @@ class STrack(BaseTrack):
         self.state = ByteTrackState.Tracked
         if frame_id == 1:
             self.is_activated = True
-        # self.is_activated = True
+        self.is_activated = True
         self.frame_id = frame_id
         self.start_frame = frame_id
 

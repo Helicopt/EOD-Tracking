@@ -689,7 +689,7 @@ class FRATracker(NoTracking):
         #     dists = matching.fuse_score(dists, detections)
         matches, u_unconfirmed, u_detection = matching.linear_assignment(dists, thresh=0.2)
         for itracked, idet in matches:
-            lost_ones[itracked].re_activate(detections[idet], state.frame_id, force=force_flag)
+            lost_ones[itracked].re_activate(detections[idet], state.frame_id)
             lost_ones[itracked].trk_ind = rrinds[idet]
             lost_ones[itracked]._embed = embeds_first[idet]
             refind_stracks.append(lost_ones[itracked])
