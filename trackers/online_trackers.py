@@ -410,8 +410,8 @@ class MotionAppearanceOnlineTracker(NoTracking):
         for j in range(bboxes.size(0)):
             track_conf = 0.
             if j not in valid:
-                nid = self.next_id(state)
                 if bboxes[j, 4] > thr:
+                    nid = self.next_id(state)
                     t = Tracklet(bboxes[j], embeds[j], nid, self.fr, **self.tracklet_cfg)
                     if gt is not None:
                         t.gid = gids[j]
@@ -428,6 +428,9 @@ class MotionAppearanceOnlineTracker(NoTracking):
                                                   int(gids[j]), data['mat']['ious'][matched, j], data['mat']['sims'][matched, j])
                     state.tracklets.append(t)
                     track_conf = 1.
+                else:
+                    nid = self.next_id(state)
+                    track_conf = 0
             else:
                 nid = state.tracklets[valid[j]].uid
                 track_conf = 1.
@@ -486,7 +489,7 @@ class XGBMotionAppearanceTracker(MotionAppearanceOnlineTracker):
 class PureAppearanceTracker(MotionAppearanceOnlineTracker):
 
     def __init__(self, sim_thr=0.8, interval=30, **kwargs):
-        super().__init__(keep_thr=0.01, output_thr=-1, sim_thr=sim_thr, interval=interval, **kwargs)
+        super().__init__(keep_thr=0.1, output_thr=0.1, sim_thr=sim_thr, interval=interval, **kwargs)
 
     def predict(self, data):
         return data['mat']['sims']

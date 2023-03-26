@@ -22,6 +22,12 @@ def predict_orientation(orient_cls, orient_reg):
     cls_score, cls_ind = orient_cls.max(dim=2)
     regs = torch.gather(orient_reg, 2, cls_ind.unsqueeze(2)).squeeze(2)
     angles = (cls_ind.float() + regs) * math.pi * 2 / DIV
+    # angles = cls_ind.float()
+    # print((cls_ind == 4).sum())
+    # print((cls_ind == 5).sum())
+    # print((cls_ind == 6).sum())
+    # print((cls_ind == 7).sum())
+    # print((cls_ind == 0).sum(), DIV)
     # angles[angles < 0] += math.pi * 2
     return angles
 
@@ -422,6 +428,11 @@ class YoloXwIDPredictor(object):
         id_embeds = torch.cat(id_feats_all, dim=0)
         if self.pred_orient:
             orientations = torch.cat(orient_all, dim=0).reshape(-1, 1)
+            # print(((orientations) == 4).sum())
+            # print(((orientations) == 5).sum())
+            # print(((orientations) == 6).sum())
+            # print(((orientations) == 7).sum())
+            # print(((orientations) == 0).sum())
         if self.pred_orient:
             return {'dt_bboxes': bboxes, 'id_embeds': id_embeds, 'orientations': orientations}
         return {'dt_bboxes': bboxes, 'id_embeds': id_embeds}

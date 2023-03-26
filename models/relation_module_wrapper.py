@@ -32,8 +32,8 @@ class RelationYOLOX(nn.Module):
             self.lw_id = 1.
             self.lw_det = 1.
         elif self.balanced_loss_weight == 'auto':
-            self.lw_id = nn.Parameter(-0.5 * torch.ones(1))
-            self.lw_det = nn.Parameter(-0.6 * torch.ones(1))
+            self.lw_id = nn.Parameter(-0.5 * torch.ones(1).float())
+            self.lw_det = nn.Parameter(-0.6 * torch.ones(1).float())
         else:
             assert False, '%s not defined' % self.balanced_loss_weight
         for i in range(len(self.inplanes)):
@@ -121,9 +121,9 @@ class RelationYOLOX(nn.Module):
                 b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
                 conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
 
-    def get_targets(self, input):
+    def get_targets(self, input, force=False):
         mlvl_preds, mlvl_locations, mlvl_ori_loc_preds = self.post_module.prepare_preds(input)
-        if self.training:
+        if self.training or force:
             targets = self.post_module.supervisor.get_targets(mlvl_locations, input, mlvl_preds)
         else:
             targets = None
@@ -326,6 +326,10 @@ class RelationYOLOX(nn.Module):
         del mlvl_preds_ref_activated
         if self.training:
             losses_rpn = self.post_module.get_loss(target_main, mlvl_preds, mlvl_ori_loc_preds, noaug_flag=noaug_flag)
+            # logger_print(losses_rpn, rk=1)
+            # logger_print(noaug_flag, rk=1)
+            # logger_print(data['main']['image_id'], rk=3)
+            # logger_print(data['main']['image'].shape, rk=3)
             losses_refined = self.get_loss(target_main, all_fg_masks, refined_mlvl_preds,
                                            mlvl_selected_gt, noaug_flag=noaug_flag)
             losses = {}
@@ -341,6 +345,28 @@ class RelationYOLOX(nn.Module):
             # print(losses)
             return losses
         else:
+            # target_main, mlvl_preds, mlvl_ori_loc_preds = self.get_targets(data['main'], force=True)
+            # if 'MOT20-01' in data['main']['image_id'][0] and ('000068' in data['main']['image_id'][0] or '000067' in data['main']['image_id'][0] or '000069' in data['main']['image_id'][0]):
+            #     aaaaa = target_main[2][0]
+            #     logger_print(data['main']['image_id'][0], aaaaa.shape, rk=3)
+            #     mmmmm = torch.cat([p[2] for p in mlvl_preds], dim=1)[0]
+            #     logger_print(mmmmm.shape, rk=3)
+            #     canvas = mmmmm.new_zeros(mmmmm.shape[0])
+            #     logger_print(canvas.shape, rk=3)
+            #     amax = aaaaa.argmax(dim=1)
+            #     logger_print(amax.shape, target_main[5][0].shape, rk=3)
+            #     canvas[target_main[5][0]] = amax.float()
+            #     torch.save(canvas, './idmap.%s.pkl' % (data['main']['image_id'][0].split('/')[-1],))
+            #     torch.save(mmmmm, './idpred.%s.pkl' % (data['main']['image_id'][0].split('/')[-1],))
+            #     for ii, one in enumerate(aaaaa):
+            #         k = (one > 0.05).nonzero()
+            #         if k == 12 or k == 7 or k == 8:
+            #             logger_print(ii, k, rk=3)
+            # losses_rpn = self.post_module.get_loss(
+            #     target_main, mlvl_preds, mlvl_ori_loc_preds, noaug_flag=[True] * len(noaug_flag))
+            # logger_print(losses_rpn, rk=1)
+            # logger_print(data['main']['image'].shape, rk=3)
+            # logger_print(data['main']['image_id'], rk=3)
             rpn_results = self.get_results(
                 mlvl_preds,
                 data['main']['roi_features'],
@@ -349,6 +375,10 @@ class RelationYOLOX(nn.Module):
                 refined_mlvl_preds,
                 all_refined_feats,
             )
+            # logger_print(refined_results['dt_bboxes'].shape, rk=3)
+            # logger_print(refined_results['id_embeds'].shape, rk=3)
+            # logger_print(refined_results['dt_bboxes'].mean(), rk=3)
+            # logger_print(refined_results['id_embeds'].mean(), rk=3)
             for k in rpn_results:
                 refined_results[k + '_rpn'] = rpn_results[k]
                 # refined_results[k] = rpn_results[k]
@@ -364,8 +394,11 @@ class RelationYOLOX(nn.Module):
     def get_results(self, mlvl_preds, mlvl_feats):
         id_feats = [mlvl_feats[lvl_idx][2] for lvl_idx in range(len(self.inplanes))]
         mlvl_preds = self.post_module.apply_activation(mlvl_preds)
+        # info_debug(mlvl_preds)
         with get_debugger().no_debug():
             results = self.post_module.predictor.predict(mlvl_preds, id_feats)
+        # info_debug(results)
+        # logger_print(results['id_info'])
         return results
 
     def get_loss(self, target, fg_masks, mlvl_preds, gt_indices, noaug_flag=None):
@@ -402,17 +435,17 @@ class RelationYOLOX(nn.Module):
                 num_ids = max(num_ids, 1)
                 loss = getattr(self, feat_name + '_loss')(pred[fg_masks][valid],
                                                           target_this[valid][:, 1:], normalizer_override=num_ids)
-                loss = loss * lw_id
+                # loss = loss * lw_id
             else:
                 # info_debug([pred, fg_masks, pred[fg_masks], gt_indices, target[idx]])
                 loss = getattr(self, feat_name + '_loss')(pred[fg_masks], target_this, normalizer_override=num_fgs)
-                loss = loss * lw_det
+                # loss = loss * lw_det
             losses[self.prefix + '.' + feat_name + '_loss'] = loss
         if self.refine_obj:
             losses[self.prefix + '.obj_loss'] = self.post_module.obj_loss(
                 torch.cat(preds[3], dim=1).flatten(),
                 fg_masks.flatten(),
-                normalizer_override=num_fgs) * lw_det
+                normalizer_override=num_fgs)  # * lw_det
         if self.balanced_loss_weight == 'auto':
             losses[self.prefix + '.lwnorm_loss'] = (self.lw_id + self.lw_det) * self.balance_scale
         return losses

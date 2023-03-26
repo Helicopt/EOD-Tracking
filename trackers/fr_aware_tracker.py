@@ -22,6 +22,8 @@ from eod.utils.general.registry_factory import MODULE_ZOO_REGISTRY
 from scipy.interpolate import interp1d
 import xgboost as xgb
 
+import cv2
+
 
 def sim(af, bf):
     return float(torch.sum(af * bf))
@@ -189,9 +191,40 @@ def get_single_nn_model(model_cfg):
     return model
 
 
+def show_distances(dmat, index, lboxes, rboxes, limg, rimg, mode='left', dst='./dist.jpg'):
+    from matplotlib import pyplot as plt
+    if mode == 'right':
+        tmp = lboxes
+        lboxes = rboxes
+        rboxes = tmp
+        tmp = limg
+        limg = rimg
+        rimg = tmp
+        dmat = dmat.T
+    wsep = 10
+    wbox = 100
+    hbox = 300
+    hsep = 100
+    margin = 10
+    width = len(rboxes) * (wbox + wsep) + margin * 2
+    height = hsep + hbox * 2 + margin * 2
+    canvas = np.zeros((height, width, 3), dtype=np.uint8) + 255
+    x1, y1, x2, y2 = map(int, lboxes[index].tlbr)
+    x1, y1, x2, y2 = max(x1, 0), max(y1, 0), min(x2, rimg.shape[1]), min(y2, rimg.shape[0])
+    canvas[margin:margin + hbox, margin:margin + wbox] = cv2.resize(limg[y1:y2, x1:x2], (wbox, hbox))
+    for i in range(len(rboxes)):
+        x1, y1, x2, y2 = map(int, rboxes[i].tlbr)
+        x1, y1, x2, y2 = max(x1, 0), max(y1, 0), min(x2, rimg.shape[1]), min(y2, rimg.shape[0])
+        canvas[margin + hsep + hbox:margin + hsep + hbox * 2,
+               margin + i * (wbox + wsep):margin + i * (wbox + wsep) + wbox] = cv2.resize(rimg[y1:y2, x1:x2], (wbox, hbox))
+        cv2.putText(canvas, '{:.2f}'.format(dmat[index, i]), (margin + i * (wbox + wsep), margin + hsep + hbox - margin),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 1)
+    cv2.imwrite(dst, canvas)
+
+
 @MODULE_ZOO_REGISTRY.register('fr_aware_tracker')
 class FRATracker(NoTracking):
-    def __init__(self, cfg, old_kalman=False, frame_rate=30, collect=None, data_dir='./data',
+    def __init__(self, cfg, old_kalman=False, frame_rate=30, collect=None, data_dir='./data', assoc_with_extra=False,
                  xgb_model=None, xgb_gatings=[None, None], nn_model=None, nn_gatings=[None, None], use_gt=False, pretracking=True):
         super(FRATracker, self).__init__()
         # self.tracked_stracks = []  # type: list[STrack]
@@ -218,6 +251,7 @@ class FRATracker(NoTracking):
         self.gating_0 = 1 - 0.5
         self.gating_1 = 1 - 0.7
         self.pretracking = pretracking
+        self.assoc_with_extra = assoc_with_extra
         if nn_model is not None:
             self.nn_model = get_single_nn_model(nn_model)
             self.unsorted = nn_model.get('unsorted', False)
@@ -243,6 +277,7 @@ class FRATracker(NoTracking):
         state.done_flag = False
         state.frame_id = 0
         state.cache = {}
+        state.prev_gids = None
 
     def finalize(self, state):
         tag = 'data'
@@ -256,7 +291,7 @@ class FRATracker(NoTracking):
         gt_file = os.path.join(seq_dir, 'gt', 'gt.txt')
         # seq = os.path.basename(seq_dir)
         seq = os.path.basename(os.path.dirname(vimage_id))
-        if not seq.startswith('S-'):
+        if not seq.startswith('S-') and not seq.startswith('D_'):
             seq = os.path.basename(seq_dir)
         if self.use_gt and os.path.exists(gt_file):
             if not hasattr(self, 'seq_name') or self.seq_name != seq:
@@ -319,7 +354,7 @@ class FRATracker(NoTracking):
             # print(skip, major, seqno)
             skip = int(skip)
         else:
-            skip = 1
+            skip = 16
             major = seq
             seqno = 'X'
         ret = {'thr_first': 0.8, 'thr_second': 0.9, 'skip': skip, 'seq': '-'.join([str(skip), major, seqno])}
@@ -387,6 +422,39 @@ class FRATracker(NoTracking):
         # print(Y)
         return Y
 
+    def nn_predict2(self, cfg, extra=None, lvl=0):
+        if extra is None:
+            return np.ones((1, 0))
+        acm, ecm, mcm = extra['original_cos_sim']
+        gmat = mcm
+        if extra is not None:
+            min_diff = extra['ctrl_emb'].cpu().numpy().astype(np.float32)
+            if not self.unsorted:
+                min_diff = np.sort(min_diff)
+            min_diff = interp1d(np.arange(min_diff.shape[0]), min_diff)(
+                np.arange(0, min_diff.shape[0] - 1, (min_diff.shape[0] - 1) / 300))[:300]
+            min_diff = torch.from_numpy(min_diff).to(self.device).float()
+        else:
+            min_diff = torch.zeros((300, )).to(self.device).float()
+        intvls = torch.from_numpy(np.array([cfg['skip'], lvl]).reshape(
+            1, 1, 2).repeat(gmat.shape[0], 0).repeat(gmat.shape[1], 1)).to(self.device)
+
+        X = torch.cat([intvls.float(), acm.float().reshape(*gmat.shape, 1),
+                       mcm.float().reshape(*gmat.shape, 1), ecm.float().reshape(*gmat.shape, 1), ], dim=2)
+        N, M, C = X.shape
+        X = X.reshape(N * M, C)
+        if X.numel() == 0:
+            Y = np.zeros((N, M))
+        else:
+            self.nn_model.eval()
+            self.nn_model = self.nn_model.to(self.device)
+            # X = torch.from_numpy(X).to(self.device)
+            Y = self.nn_model({'features': X, 'ctrl': min_diff.reshape(1, -1)})['pred']
+            Y = 1 - Y.reshape(N, M)
+            Y = Y.cpu().numpy()
+        # print(Y)
+        return Y
+
     def forward(self, state, inputs):
         if state.done_flag:
             return inputs
@@ -408,6 +476,9 @@ class FRATracker(NoTracking):
             max_time_lost = self.max_time_lost
         self.device = output_results.device
         gids = self.assign_gt(real_output_results, gt)
+        if 'extra' in inputs and inputs['extra'] is not None:
+            inputs['extra']['gids'] = (state.prev_gids, gids)
+        state.prev_gids = gids
         total_scores = real_output_results[:, 4]
         total_bboxes = real_output_results[:, :4]
         total_cls = real_output_results[:, 5]
@@ -473,15 +544,22 @@ class FRATracker(NoTracking):
                 t.gid for t in strack_pool], rids=[gids[int(i)] for i in remain_inds_i], extra=inputs.get('extra', None))
         thr_first = seq_config['thr_first']
         trk_inds = [trk.trk_ind for trk in strack_pool]
-        has_assoc = inputs.get('affinities', None) is not None and not self.pretracking
+        # has_assoc = inputs.get('affinities', None) is not None and not self.pretracking
+        has_assoc = self.assoc_with_extra
         if has_assoc:
             # logger_print('affinities', inputs['affinities'].shape)
             # logger_print(remain_inds_i.squeeze(-1))
             # logger_print(trk_inds)
-            dists = 1 - torch.sigmoid(inputs['affinities'][remain_inds_i.squeeze(-1)]
-                                      [:, trk_inds]).T.cpu().numpy()
+            dists2 = self.nn_predict2(seq_config, inputs['extra'] if 'extra' in inputs else None, lvl=0)
+            inputs['affinities'] = dists2
+            if dists2.nbytes == 0:
+                if dists.shape[1] == 0:
+                    dists2 = dists2.reshape(0, 0)
+                else:
+                    dists2 = dists2.reshape(dists.shape[1], -1)
+            dists = inputs['affinities'][remain_inds_i.squeeze(-1).cpu().numpy()][:, trk_inds].T
             # logger_print(dists.min(axis=1))
-            self.gating_0 = 0.6
+            self.gating_0 = 0.9
         elif hasattr(self, 'nn_model'):
             dists = self.nn_predict(motion_cm, appearance_cm, edists, seq_config, lvl=0,
                                     extra=inputs['extra'] if 'extra' in inputs else None)
@@ -496,6 +574,10 @@ class FRATracker(NoTracking):
         # print(sims)
         # if state.frame_id > 3:
         #     exit(0)
+        # rimg = cv2.imread(inputs['image_id'])
+        # if hasattr(state, 'limg'):
+        #     show_distances(dists, 0, strack_pool, detections, state.limg, rimg)
+        # state.limg = rimg
         matches, u_track, u_detection = matching.linear_assignment(dists, thresh=1 - self.gating_0)
         if gids is not None:
             self.analyse(dists, strack_pool, detections, gids, sims, edists, matches, state.frame_id)
@@ -520,11 +602,11 @@ class FRATracker(NoTracking):
             track._embed = embeds_first[idet]
             if track.state == ByteTrackState.Tracked:
                 track.update(detections[idet], state.frame_id, force=force_flag)
-                track.trk_ind = remain_inds_i[idet]
+                track.trk_ind = int(remain_inds_i[idet])
                 activated_starcks.append(track)
             else:
                 track.re_activate(det, state.frame_id, new_id=False)
-                track.trk_ind = remain_inds_i[idet]
+                track.trk_ind = int(remain_inds_i[idet])
                 refind_stracks.append(track)
 
         ''' Step 3: Second association, with low score detection boxes'''
@@ -552,9 +634,8 @@ class FRATracker(NoTracking):
             # logger_print('affinities', inputs['affinities'].shape)
             # logger_print(remain_inds_i)
             # logger_print(trk_inds)
-            dists = 1 - torch.sigmoid(inputs['affinities'][inds_second_i]
-                                      [:, trk_inds]).T.cpu().numpy()
-            self.gating_1 = 0.6
+            dists = inputs['affinities'][inds_second_i][:, trk_inds].T
+            self.gating_1 = 0.9
         elif hasattr(self, 'nn_model'):
             dists = self.nn_predict(motion_cm, appearance_cm, edists, seq_config, lvl=1,
                                     extra=inputs['extra'] if 'extra' in inputs else None)

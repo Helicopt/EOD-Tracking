@@ -412,6 +412,12 @@ class ATSSwIDSupervisor(object):
         cls_target = all_anchors.new_full((B, K), 0, dtype=torch.int64)
         loc_target = all_anchors.new_zeros((B, K, 4))
         id_target = all_anchors.new_full((B, K), -1, dtype=torch.int64)
+        # if self.num_orient_class > 0:
+        #     ocls_target = all_anchors.new_full((B, K), -1, dtype=torch.int64)
+        #     oreg_target = all_anchors.new_zeros((B, K))
+        # else:
+        #     ocls_target = None
+        #     oreg_target = None
         sample_cls_mask = all_anchors.new_zeros((B, K), dtype=torch.bool)
         sample_loc_mask = all_anchors.new_zeros((B, K), dtype=torch.bool)
         sample_id_mask = all_anchors.new_zeros((B, K), dtype=torch.bool)
@@ -433,6 +439,9 @@ class ATSSwIDSupervisor(object):
                 bbox = gt[:, :4]
                 labels = gt[:, 4]
                 id_labels = gt[:, 5]
+                # if self.num_orient_class > 0:
+                #     orient_labels = gt[:, 6]
+                #     orient_reg = gt[:, 7]
                 ious = bbox_iou_overlaps(all_anchors, gt)
                 gt_cx = (bbox[:, 2] + bbox[:, 0]) / 2.0
                 gt_cy = (bbox[:, 3] + bbox[:, 1]) / 2.0
@@ -482,10 +491,16 @@ class ATSSwIDSupervisor(object):
 
                 labels = labels[anchors_to_gt_indexs]
                 id_labels = id_labels[anchors_to_gt_indexs]
+                # if self.num_orient_class > 0:
+                #     orient_labels = orient_labels[anchors_to_gt_indexs]
+                #     orient_reg = orient_reg[anchors_to_gt_indexs]
                 neg_index = anchors_to_gt_values == -INF
                 pos_index = ~neg_index
                 labels[anchors_to_gt_values == -INF] = neg_targets[b_ix]
                 id_labels[anchors_to_gt_values == -INF] = -1
+                # if self.num_orient_class > 0:
+                #     orient_labels[anchors_to_gt_values == -INF] = -1
+                #     orient_reg[anchors_to_gt_values == -INF] = 0
                 matched_gts = bbox[anchors_to_gt_indexs]
                 if self.gt_encode:
                     reg_targets_per_im = bbox2offset(all_anchors, matched_gts)
@@ -494,6 +509,9 @@ class ATSSwIDSupervisor(object):
                 cls_target[b_ix] = labels
                 loc_target[b_ix] = reg_targets_per_im
                 id_target[b_ix] = id_labels
+                # if self.num_orient_class > 0:
+                #     ocls_target[b_ix] = orient_labels
+                #     oreg_target[b_ix] = orient_reg
                 sample_cls_mask[b_ix] = pos_index
                 sample_loc_mask[b_ix] = pos_index
                 sample_id_mask[b_ix] = pos_index & (id_labels != 0)
@@ -509,6 +527,9 @@ class ATSSwIDSupervisor(object):
                     ig_inside_bbox_mask = (ig_targets.min(-1)[0] > 0).max(-1)[0]
                     cls_target[b_ix][ig_inside_bbox_mask] = -1
                     id_target[b_ix][ig_inside_bbox_mask] = 0
+                    # if self.num_orient_class > 0:
+                    #     ocls_target[b_ix][ig_inside_bbox_mask] = -1
+                    #     oreg_target[b_ix][ig_inside_bbox_mask] = 0
                     sample_cls_mask[b_ix][ig_inside_bbox_mask] = False
                     sample_loc_mask[b_ix][ig_inside_bbox_mask] = False
                     sample_id_mask[b_ix][ig_inside_bbox_mask] = False

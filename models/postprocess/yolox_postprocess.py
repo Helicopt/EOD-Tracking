@@ -12,7 +12,7 @@ from eod.tasks.det.models.utils.bbox_helper import bbox_iou_overlaps as bbox_ove
 from eod.utils.env.dist_helper import allreduce, env
 from eod.tasks.det.models.postprocess.roi_supervisor import build_roi_supervisor
 from eod.tasks.det.models.postprocess.roi_predictor import build_roi_predictor
-from ...utils.debug import logger_print
+from ...utils.debug import logger_print, info_debug
 
 
 __all__ = ['YoloxwIDPostProcess']
@@ -133,6 +133,8 @@ class YoloxwIDPostProcess(nn.Module):
 
         if self.training:
             targets = self.supervisor.get_targets(mlvl_locations, input, mlvl_preds)
+            # print(input['image_id'])
+            # print(list(gb.shape for gb in input['gt_bboxes']))
             if not self.use_l1:
                 losses = self.get_loss(targets, mlvl_preds, noaug_flag=noaug_flag)
             else:
@@ -301,6 +303,11 @@ class YoloxwAssocProcess(YoloxwIDPostProcess):
                 b_gt_bboxes = input['refs']['original'][-1]['gt_bboxes'][i]
                 a_ids = self.match_detections(a_dets, a_gt_bboxes)
                 b_ids = self.match_detections(b_dets, b_gt_bboxes)
+                # logger_print(a_dets)
+                # logger_print(a_gt_bboxes)
+                # logger_print(b_gt_bboxes)
+                # logger_print(a_ids)
+                # logger_print(b_ids)
                 target = (a_ids.reshape(-1, 1) == b_ids.reshape(1, -1)).float()
                 mask = (a_ids > 0).reshape(-1, 1) | (b_ids > 0).reshape(1, -1)
                 masks.append(mask)
@@ -312,6 +319,10 @@ class YoloxwAssocProcess(YoloxwIDPostProcess):
         num_all = max(num_all, 1)
         num_fgs = pos_masks.sum().item()
         num_fgs = max(num_fgs, 1)
+        # logger_print('num_fgs: {}'.format(num_fgs))
+        # info_debug(assoc_pred, statistics=True)
+        # info_debug(assoc_targets, statistics=True)
+        # info_debug(masks, statistics=True)
         full_assoc_loss = self.assoc_loss(assoc_pred[masks], assoc_targets[masks], normalizer_override=num_all)
         pos_assoc_oss = self.assoc_loss(assoc_pred[pos_masks], assoc_targets[pos_masks], normalizer_override=num_fgs)
         losses = {
@@ -319,6 +330,11 @@ class YoloxwAssocProcess(YoloxwIDPostProcess):
             self.prefix + '.accuracy_assoc_full': A.accuracy_v2(assoc_pred[masks], assoc_targets[masks], activation_type='sigmoid'),
             self.prefix + '.accuracy_assoc_pos': A.accuracy_v2(assoc_pred[pos_masks], assoc_targets[pos_masks], activation_type='sigmoid')
         }
+        # logger_print(torch.sigmoid(assoc_pred[masks]))
+        # logger_print(assoc_targets[masks])
+        # logger_print(torch.sigmoid(assoc_pred[pos_masks]))
+        # logger_print(assoc_targets[pos_masks])
+        # logger_print(losses)
         if self.pred_framerate:
             pred_skip = input['log2framerates'].reshape(-1)
             target_skip = input.get('framerate', None)
@@ -338,6 +354,8 @@ class YoloxwAssocProcess(YoloxwIDPostProcess):
 
         if self.training:
             targets = self.supervisor.get_targets(mlvl_locations, input, mlvl_preds)
+            # print(input['image_id'])
+            # print(list(gb.shape for gb in input['gt_bboxes']))
             if not self.use_l1:
                 losses = self.get_loss(targets, mlvl_preds, noaug_flag=noaug_flag)
             else:
@@ -442,6 +460,11 @@ class YoloxwIDnOrientPostProcess(YoloxwIDPostProcess):
         acc_id = self.get_acc(id_pred[fg_masks][valid_id_masks], id_targets[valid_id_masks][:, 1:])
         acc_orient = self.get_acc(orient_pred[fg_masks][valid_id_masks], ocls_targets[valid_id_masks])
 
+        # print(list(map(lambda x: tuple(map(int, x)),
+        #                zip(orient_pred[fg_masks][valid_id_masks].argmax(
+        #                    dim=-1), ocls_targets[valid_id_masks].argmax(dim=-1), id_targets[valid_id_masks].argmax(dim=-1))
+        #                )))
+        # print(acc_orient)
         loc_target = reg_targets.reshape(-1, 4)
         loc_pred = loc_pred.reshape(-1, 4)
         # loc_preds [xc, yc, w, h] -> [x1, y1, x2, y2]
